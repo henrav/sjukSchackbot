@@ -1,0 +1,71 @@
+pawns movement
+
+    0 0 0 0 0 0 0 0  --->  0 0 0 0 0 0 0 0
+    0 0 0 0 0 0 0 0  --->  0 0 0 0 0 0 0 0
+    0 0 0 0 0 0 0 0  --->  0 0 0 0 0 0 0 0
+    0 0 0 0 0 0 0 0  --->  0 0 0 0 0 0 0 0
+    0 0 0 0 0 0 0 0  --->  0 0 0 0 0 0 0 0
+    0 0 0 0 0 0 0 0  --->  0 0 0 0 1 0 0 0
+    0 0 0 0 1 0 0 0  --->  0 0 0 0 0 0 0 0
+    0 0 0 0 0 0 0 0  --->  0 0 0 0 0 0 0 0
+
+    pawn move forward one square = + 8 from current position
+    pawn move forward two squares = + 16 from current position
+    pawn move forward left = + 7 from current position
+    pawn move forward right = + 9 from current position
+
+
+knight movement
+
+    knight move 2 up and 1 left = - 15 from current position
+    knight move 2 up and 1 right = - 17 from current position
+    knight move 2 down and 1 left = + 15 from current position
+    knight move 2 down and 1 right = + 17 from current position
+    knight move 1 up and 2 left = - 6 from current position
+    knight move 1 up and 2 right = - 10 from current position
+    knight move 1 down and 2 left = + 6 from current position
+    knight move 1 down and 2 right = + 10 from current position
+
+bishop movement
+
+    bishop move up and left = - 9 from current position
+    bishop move up and right = - 7 from current position
+    bishop move down and left = + 7 from current position
+    bishop move down and right = + 9 from current position
+
+rook movement
+
+    rook move up = - 8 from current position
+    rook move down = + 8 from current position
+    rook move left = - 1 from current position
+    rook move right = + 1 from current position
+
+
+queen movement
+
+    queen move up = - 8 from current position
+    queen move down = + 8 from current position
+    queen move left = - 1 from current position
+    queen move right = + 1 from current position
+    queen move up and left = - 9 from current position
+    queen move up and right = - 7 from current position
+    queen move down and left = + 7 from current position
+    queen move down and right = + 9 from current position
+
+king movement
+
+        king move up = - 8 from current position
+        king move down = + 8 from current position
+        king move left = - 1 from current position
+        king move right = + 1 from current position
+        king move up and left = - 9 from current position
+        king move up and right = - 7 from current position
+        king move down and left = + 7 from current position
+        king move down and right = + 9 from current position
+
+
+
+
+
+
+
