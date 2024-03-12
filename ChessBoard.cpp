@@ -20,8 +20,6 @@ struct Move {
     Move(uint64_t* moved, uint64_t from, uint64_t to, uint64_t* captured = nullptr, bool cap = false)
             : pieceMoved(moved), fromSquare(from), toSquare(to), pieceCaptured(captured), capture(cap) {}
 
-
-
 };
 
 class ChessBoard {
@@ -68,7 +66,7 @@ public:
 
 
 
-    [[nodiscard]] PieceType getPieceTypeOnSquare(int theSquare) {
+    [[nodiscard]] PieceType getPieceTypeOnSquare(uint64_t theSquare) {
         uint64_t mask = 1ULL << theSquare;
         if ((whitePawns | blackPawns) & mask) return Pawn;
         if ((whiteKnights | blackKnights) & mask) return Knight;
@@ -81,14 +79,14 @@ public:
     }
 
     //check if square is occupied by white piece
-    bool isSquareOccupiedByWhite(int square) {
+    bool isSquareOccupiedByWhite(uint64_t square) {
         uint64_t mask = 1ULL << square;
         return (whitePieces & mask) != 0;
     }
 
 
     //check if square is occupied
-    bool isSquareOccupied(int square) {
+    bool isSquareOccupied(uint64_t square) {
         uint64_t mask = 1ULL << square;
         return (occupiedSquares & mask) != 0;
     }
@@ -159,6 +157,7 @@ public:
             updateOccupiedSquares();
             moveHistory.pop_back(); // Remove the last move from history
         }
+        printBoard();
     }
 
     // Function to print the board - mainly for debugging purposes
@@ -167,9 +166,57 @@ public:
             for (int file = 0; file < 8; file++) {
                 uint64_t position = 1ULL << (rank * 8 + file);
                 if (occupiedSquares & position) {
-                    std::cout << "1 ";
+                    PieceType pieceType = getPieceTypeOnSquare(rank * 8 + file);
+                    bool isWhite = (whitePieces & position) != 0;
+                    if (isWhite) {
+                        switch (pieceType) {
+                            case Pawn:
+                                std::cout << " P ";
+                                break;
+                            case Knight:
+                                std::cout << " N ";
+                                break;
+                            case Bishop:
+                                std::cout << " B ";
+                                break;
+                            case Rook:
+                                std::cout << " R ";
+                                break;
+                            case Queen:
+                                std::cout << " Q ";
+                                break;
+                            case King:
+                                std::cout << " K ";
+                                break;
+                            default:
+                                std::cout << " w ";
+                        }
+                    } else {
+                        switch (pieceType) {
+                            case Pawn:
+                                std::cout << " p ";
+                                break;
+                            case Knight:
+                                std::cout << " n ";
+                                break;
+                            case Bishop:
+                                std::cout << " b ";
+                                break;
+                            case Rook:
+                                std::cout << " r ";
+                                break;
+                            case Queen:
+                                std::cout << " q ";
+                                break;
+                            case King:
+                                std::cout << " k ";
+                                break;
+                            default:
+                                std::cout << " b ";
+                        }
+                    }
                 } else {
-                    std::cout << ". ";
+                    std::cout << " . ";
                 }
             }
             std::cout << std::endl;
@@ -209,29 +256,24 @@ public:
         int startSquare = bitScanForward(knightPosition);
         const std::vector<int> offsets = {-17, -15, -10, -6, 6, 10, 15, 17};
         bool isWhite = (whitePieces & knightPosition) != 0;
-        uint64_t ownPieces = isWhite ? this->whitePieces : this->blackPieces;
-        uint64_t enemyPieces = isWhite ? this->blackPieces : this->whitePieces;
-        uint64_t* knightBitboard = isWhite ? &this->whiteKnights : &this->blackKnights;
+        uint64_t ownPieces = isWhite ? whitePieces : blackPieces;
+        uint64_t enemyPieces = isWhite ? blackPieces : whitePieces;
+        uint64_t* knightBitboard = isWhite ? &whiteKnights : &blackKnights;
 
         for (int offset : offsets) {
             int targetSquare = startSquare + offset;
             if (isSquareInBounds(startSquare, targetSquare)) {
                 uint64_t targetBitboard = 1ULL << targetSquare;
-                bool isTargetSquareOccupied = this->occupiedSquares & targetBitboard;
-                bool isTargetSquareOccupiedByOwn = ownPieces & targetBitboard;
-
-                // Proceed if the target square is not occupied by a piece of the same color.
-                if (!isTargetSquareOccupiedByOwn) {
+                // Check if the target square is not occupied by a piece of the same color
+                if (!(ownPieces & targetBitboard)) {
+                    // Determine if it's a capture move
+                    bool isCapture = enemyPieces & targetBitboard;
                     uint64_t* capturedPieceBitboard = nullptr;
-                    bool isCapture = isTargetSquareOccupied && (enemyPieces & targetBitboard);
-
-                    // Determine captured piece bitboard if it's a capture.
                     if (isCapture) {
                         PieceType pieceType = getPieceTypeOnSquare(targetSquare);
                         capturedPieceBitboard = getBitboardPointerByPieceType(pieceType, !isWhite);
                     }
-
-                    // Create and add the move.
+                    // Create and add the move
                     moves.emplace_back(knightBitboard, 1ULL << startSquare, 1ULL << targetSquare, capturedPieceBitboard, isCapture);
                 }
             }
@@ -239,6 +281,7 @@ public:
 
         return moves;
     }
+
 
     bool playerMove(int startRank, int startFile, int targetRank, int targetFile) {
         uint64_t fromMask = 1ULL << (startRank * 8 + startFile);
@@ -254,9 +297,10 @@ public:
         for (const Move& move : possibleMoves) {
             if (move.toSquare == toMask) {
                 // The move is valid, execute it
-                uint64_t* pieceBitboard = getBitboardPointerByPieceType(pieceType, isSquareOccupiedByWhite(fromMask));
-                uint64_t* capturedPieceBitboard = isSquareOccupied(toMask) ? getBitboardPointerByPieceType(
-                        getPieceTypeOnSquare(bitScanForward(toMask)), !isSquareOccupiedByWhite(fromMask)) : nullptr;
+                uint64_t* pieceBitboard = getBitboardPointerByPieceType(pieceType, isSquareOccupiedByWhite(
+                        bitScanForward(fromMask)));
+                uint64_t* capturedPieceBitboard = isSquareOccupied(bitScanForward(fromMask)) ? getBitboardPointerByPieceType(
+                        getPieceTypeOnSquare(bitScanForward(toMask)), !isSquareOccupiedByWhite(bitScanForward(fromMask))) : nullptr;
 
                 movePiece(*pieceBitboard, fromMask, toMask, capturedPieceBitboard);
                 // Note: Visual and state updates related to the GUI should be handled in the calling function or component.
