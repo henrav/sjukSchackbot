@@ -1,6 +1,7 @@
 //
 // Created by Henrik Ravnborg on 2024-03-09.
 //
+#include <thread>
 #include "ChessBoard.cpp"
 
 
@@ -56,10 +57,20 @@ public:
                         board->resetPreviousMove();
                         updatePieces();
                     }
+                    if (event.key.code == sf::Keyboard::R) {
+                        board->resetBoard();
+                        updatePieces();
+                    }
+                    if (event.key.code == sf::Keyboard::Escape) {
+                        window.close();
+                    }
                 }
 
             }
-
+            if (update) {
+                updatePieces();
+                update = false;
+            }
             window.clear();
             draw();
             window.display();
@@ -192,6 +203,7 @@ private:
         int fileTaken = pickUpPos[0];
 
         // Call playerMove on the chessBoard with the starting and ending positions.
+
         bool moveWasSuccessful = chessBoard->playerMove(rankTaken, fileTaken, rank, file);
 
         if (moveWasSuccessful) {
