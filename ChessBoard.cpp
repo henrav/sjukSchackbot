@@ -774,7 +774,7 @@ public:
                 for (auto& move : moves) {  // Iterate through all generated moves
                     movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured); // Apply the move to see its potential
                     if (!isKingInCheck(false)) {  // Ensure the move does not leave your king in check
-                        int score = alphaBeta(move, INT_MIN, INT_MAX, 4, false);  // Evaluate the move using alpha-beta pruning
+                        int score = alphaBeta(move, INT_MIN, INT_MAX, 3, false);  // Evaluate the move using alpha-beta pruning
                         if (score > bestScore) {  // If this move is better than previous ones, update bestScore and bestMove
                             bestScore = score;
                             bestMove = move;
@@ -809,13 +809,14 @@ public:
         }
     }
     const std::vector<int> pawnPositionalValue = {
-            0, 0, 0, 0, 0, 0, 0, 0, // Rank 1 (from white's perspective)
-            1, 2, 3, 5, 5, 3, 2, 1, // Rank 2
-            1, 1, 2, 3, 3, 2, 1, 1, // Rank 3
-            0, 0, 0, 2, 2, 0, 0, 0, // Rank 4
-            1, 1, 2, 3, 3, 2, 1, 1, // Rank 5
-            1, 2, 3, 5, 5, 3, 2, 1, // Rank 6
-            7, 7, 7, 7, 7, 7, 7, 7, // Rank 7
+            0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 ,
+            0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 ,
+            3 , 8 , 8 , 15 , 15 , 8 , 8 , 3 ,
+            3 , 7 , 7 , 12 , 12 , 7 , 7 , 3 ,
+            3 , 4 , 8 , 12 , 12 , 8 , 4 , 3 ,
+            2 , 5 , 5 , 5 , 5 , 5 , 5 , 2 ,
+            0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 ,
+            0 , 0 , 0 , 0 , 0 , 0 , 0 , 0
     };
 
 // Positional values for knights
@@ -911,7 +912,7 @@ public:
                 pieceValue = knightValue + knightPositionalValue[i];
             } else if (whiteBishops & position || blackBishops & position) {
                 pieceValue = bishopValue + bishopPositionalValue[i];
-            }
+            }else if (whiteRooks & )
             // Continue for other piece types
 
             // Adjust the score based on the piece's color relative to the side being evaluated
@@ -920,7 +921,7 @@ public:
         bool isthreatened = isSquareThreatened(bitScanForward(move.toSquare), isWhite);
         if (isthreatened){
             int minusscore = getPieceValue(getPieceTypeOnSquare(bitScanForward(move.fromSquare)));
-            score -= (minusscore * 2);
+            score -= (minusscore * 10);
         }
         // After scoring all pieces, check if the moved piece is threatened and adjust the score
 
