@@ -30,10 +30,10 @@ public:
     const int knightValue = 45;
     const int bishopValue = 45;
     const int rookValue = 70;
-    const int queenValue = 130;
+    const int queenValue = 200;
 
     // Additional score for capturing a more valuable piece with a less valuable piece
-    const int captureBonus = 30;
+    const int captureBonus = 10;
     uint64_t whitePawns{};
     uint64_t whiteRooks{};
     uint64_t whiteKnights{};
@@ -764,33 +764,38 @@ public:
     }
 
     void generateBotMoves() {
-        Move bestMove;
-        int bestScore = INT_MIN;
+        Move bestMove;  // This will be used to store the best move found
+        int bestScore = INT_MIN;  // Initialize bestScore with the lowest possible value
 
+        // Iterate through all squares on the board
         for (int i = 0; i < 64; i++) {
-            if (blackPieces & (1ULL << i)) {
-                auto moves = generateMovesForPiece(1ULL << i, getPieceTypeOnSquare(i));
-                for (auto& move : moves) {
-                    movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured);
-                    if (!isKingInCheck(false)) {  // Check for no check on black
-                        movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured);
-                        int score = alphaBeta(INT_MIN, INT_MAX, 4, false);
-                        if (score > bestScore) {
+            if (blackPieces & (1ULL << i)) {  // Check if there is a black piece on the square
+                auto moves = generateMovesForPiece(1ULL << i, getPieceTypeOnSquare(i));  // Generate possible moves for this piece
+                for (auto& move : moves) {  // Iterate through all generated moves
+                    movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured); // Apply the move to see its potential
+                    if (!isKingInCheck(false)) {  // Ensure the move does not leave your king in check
+                        int score = alphaBeta(move, INT_MIN, INT_MAX, 4, false);  // Evaluate the move using alpha-beta pruning
+                        if (score > bestScore) {  // If this move is better than previous ones, update bestScore and bestMove
                             bestScore = score;
                             bestMove = move;
                         }
-                        resetPreviousMove();
                     }
-                    resetPreviousMove();
+                    resetPreviousMove();  // Revert the move to restore the board state
                 }
             }
         }
 
-        if (bestMove.pieceMoved) {  // Check if a move was found
-            movePiece(*bestMove.pieceMoved, bestMove.fromSquare, bestMove.toSquare, bestMove.pieceCaptured);
-            whitesTurn = !whitesTurn;  // Switch turn
+        // After evaluating all moves, apply the best move found
+        if (bestMove.pieceMoved) {  // Check if a best move has been identified
+            movePiece(*bestMove.pieceMoved, bestMove.fromSquare, bestMove.toSquare, bestMove.pieceCaptured);  // Apply the best move
+            whitesTurn = !whitesTurn;  // Switch turns
         }
     }
+
+// Note: This pseudocode assumes the existence of functions like movePiece, isKingInCheck,
+// generateMovesForPiece, getPieceTypeOnSquare, and a correct implementation of alphaBeta.
+// The actual implementation of these functions will depend on the details of your chess engine.
+
 
 
     std::vector<Move> generateAllPossibleMoves() {
@@ -825,71 +830,100 @@ public:
             -10, -4, -2, -5, -5, -2, -4, -10
     };
 
-    bool isPieceThreatened(int targetPosition, bool isPieceWhite) {
+    const std::vector<int> bishopPositionalValue = {
+            -2, -1, -1, -1, -1, -1, -1, -2,
+            -1, 0 , 0 , 0 , 0 , 0 , 0 , -1,
+            -1, 1 , 5 , 5 , 5 , 5 , 1 , -1,
+            -1, 2 , 5 , 10, 10, 5 , 2 , -1,
+            -1, 2 , 5 , 10, 10, 5 , 2 , -1,
+            -1, 1 , 5 , 5 , 5 , 5 , 1 , -1,
+            -1, 0 , 0 , 0 , 0 , 0 , 0 , -1,
+            -2, -1, -1, -1, -1, -1, -1, -2
+    };
+
+    int getPieceValue(PieceType type) {
+        switch (type) {
+            case Pawn:
+                return pawnValue; // Assuming pawnValue is predefined elsewhere
+            case Knight:
+                return knightValue; // Assuming knightValue is predefined elsewhere
+            case Bishop:
+                return bishopValue; // Assuming bishopValue is predefined elsewhere
+            case Rook:
+                return rookValue; // Assuming rookValue is predefined elsewhere
+            case Queen:
+                return queenValue; // Assuming queenValue is predefined elsewhere
+            default:
+                return 0;// ; // In case of an undefined type or None
+        }
+    }
+
+
+    bool isSquareThreatened(int targetPosition, bool isPieceWhite) {
         uint64_t enemyPieces = isPieceWhite ? blackPieces : whitePieces;
-        // Calculate row and column for targetPosition for pawn attack validation
         int targetRow = targetPosition / 8, targetCol = targetPosition % 8;
 
-        // Iterate through all squares to check for threats
+        // Iterate through all squares to check for threats from enemy pieces
         for (int i = 0; i < 64; i++) {
             uint64_t position = 1ULL << i;
             if (enemyPieces & position) {
                 PieceType pieceType = getPieceTypeOnSquare(i);
-                // Special handling for pawn threats
-                if ((isPieceWhite && pieceType == Pawn && (blackPieces & position)) ||
-                    (!isPieceWhite && pieceType == Pawn && (whitePieces & position))) {
+
+                // Special handling for pawn threats due to their unique capture movement
+                if (pieceType == Pawn) {
                     int pawnRow = i / 8, pawnCol = i % 8;
-                    // Calculate differences between the pawn and target position
-                    int rowDiff = pawnRow - targetRow;
+                    int rowDiff = isPieceWhite ? pawnRow - targetRow : targetRow - pawnRow;
                     int colDiff = abs(pawnCol - targetCol);
 
-                    // Check if pawn can attack the target position
-                    if ((isPieceWhite && rowDiff == 1 && colDiff == 1) ||
-                        (!isPieceWhite && rowDiff == -1 && colDiff == 1)) {
-                        return true; // Pawn can attack the target diagonally
+                    // Pawns can capture diagonally one square forward
+                    if (rowDiff == 1 && colDiff == 1) {
+                        return true;
                     }
                 } else {
-                    // For other pieces, generate all possible moves and check if any targets the given position
+                    // For other pieces, check if any of their possible moves can capture the target
                     std::vector<Move> possibleMoves = generateMovesForPiece(position, pieceType);
                     for (const Move& move : possibleMoves) {
                         if (bitScanForward(move.toSquare) == targetPosition) {
-                            return true; // The target can be captured by an enemy piece
+                            return true; // Found an enemy piece that can move to the target square
                         }
                     }
                 }
             }
         }
-        return false; // If no enemy moves can capture the target, it is not threatened
+        return false; // No threats found
     }
 
 
 
-    int evaluateBoard(bool isWhite) {
+
+
+    int evaluateBoard(bool isWhite, Move move) {
         int score = 0;
-
-        // Basic piece values and other constants remain the same
-
+        // Assume basic piece values and other constants are defined elsewhere
         for (int i = 0; i < 64; i++) {
             uint64_t position = 1ULL << i;
             bool isPieceWhite = (whitePieces & position) != 0;
-
             int pieceValue = 0; // Initialize to 0 for each square
 
             if (whitePawns & position || blackPawns & position) {
                 pieceValue = pawnValue + pawnPositionalValue[i];
             } else if (whiteKnights & position || blackKnights & position) {
                 pieceValue = knightValue + knightPositionalValue[i];
+            } else if (whiteBishops & position || blackBishops & position) {
+                pieceValue = bishopValue + bishopPositionalValue[i];
             }
-            // Extend this logic for bishops, rooks, queens
+            // Continue for other piece types
 
             // Adjust the score based on the piece's color relative to the side being evaluated
             score += (isPieceWhite == isWhite ? pieceValue : -pieceValue);
-            if (isPieceThreatened(i, isPieceWhite)) {
-                score -= (isPieceWhite == isWhite ? pieceValue * 2 : 0); // Double deduction for threatened piece.
-            }
         }
+        bool isthreatened = isSquareThreatened(bitScanForward(move.toSquare), isWhite);
+        if (isthreatened){
+            int minusscore = getPieceValue(getPieceTypeOnSquare(bitScanForward(move.fromSquare)));
+            score -= (minusscore * 2);
+        }
+        // After scoring all pieces, check if the moved piece is threatened and adjust the score
 
-        // No need to iterate again; all necessary calculations are done in a single pass
 
         return score;
     }
@@ -900,9 +934,10 @@ public:
 
 
 
-    int alphaBeta(int alpha, int beta, int depth, bool isMaximizer){
+
+    int alphaBeta(Move moved, int alpha, int beta, int depth, bool isMaximizer){
         if (depth == 0){
-            return evaluateBoard(false);
+            return evaluateBoard(false, moved);
         }
         if (isMaximizer){
             int maxEval = INT_MIN;
@@ -912,7 +947,7 @@ public:
                     auto moves = generateMovesForPiece(position, getPieceTypeOnSquare(i));
                     for (auto& move : moves) {
                         movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured);
-                        int eval = alphaBeta(alpha, beta, depth - 1, false);
+                        int eval = alphaBeta(move, alpha, beta, depth - 1, false);
                         maxEval = std::max(maxEval, eval);
                         alpha = std::max(alpha, eval);
                         resetPreviousMove();
@@ -931,7 +966,7 @@ public:
                     auto moves = generateMovesForPiece(position, getPieceTypeOnSquare(i));
                     for (auto& move : moves) {
                         movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured);
-                        int eval = alphaBeta(alpha, beta, depth - 1, true);
+                        int eval = alphaBeta(move, alpha, beta, depth - 1, true);
                         minEval = std::min(minEval, eval);
                         beta = std::min(beta, eval);
                         resetPreviousMove();
