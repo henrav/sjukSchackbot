@@ -6,34 +6,132 @@
 #include <SFML/Graphics/RenderWindow.hpp>
 #include <SFML/Graphics/Sprite.hpp>
 #include <SFML/Graphics/Texture.hpp>
-#include <iostream>
 #include <cstdint>
+#include <algorithm>
+#include <iostream>
+using namespace std;
+
 static bool update = false;
+
 struct Move {
     uint64_t* pieceMoved;    // Pointer to the bitboard of the piece that moved
     uint64_t fromSquare;     // Bitboard representation of the starting square
     uint64_t toSquare;       // Bitboard representation of the destination square
-    uint64_t* pieceCaptured;// Pointer to the bitboard of the captured piece, if any
+    uint64_t* pieceCaptured; // Pointer to the bitboard of the captured piece, if any
     bool capture;            // Indicates if the move was a capture
+    bool castle;             // Indicates if the move was a castling move
+    uint64_t kingToSquare;   // Bitboard representation of the king's destination square in a castling move
+    uint64_t kingFromSquare; // Bitboard representation of the king's starting square in a castling move
+    bool whiteKing;          // Indicates if it's a white king in a castling move
+    bool promotion;          // Indicates if the move is a pawn promotion
+    int score;               // Score of the move for evaluation
 
+    // Default constructor
+    Move() : pieceMoved(nullptr), fromSquare(0), toSquare(0), pieceCaptured(nullptr), capture(false), castle(false), kingToSquare(0), kingFromSquare(0), promotion(false), score(0) {}
 
-    Move() : pieceMoved(nullptr), fromSquare(0), toSquare(0), pieceCaptured(nullptr), capture(false){}
+    // Constructor for regular and capture moves
+    Move(uint64_t* moved, uint64_t from, uint64_t to, uint64_t* captured = nullptr, bool cap = false, int moveScore = 0)
+            : pieceMoved(moved), fromSquare(from), toSquare(to), pieceCaptured(captured), capture(cap), castle(false), kingToSquare(0), kingFromSquare(0), promotion(false), score(moveScore) {}
 
-    Move(uint64_t* moved, uint64_t from, uint64_t to, uint64_t* captured = nullptr, bool cap = false, int score = 0)
-            : pieceMoved(moved), fromSquare(from), toSquare(to), pieceCaptured(captured), capture(cap) {}
+    // Constructor for castling moves
+    Move(uint64_t* moved, uint64_t from, uint64_t to, bool cas, uint64_t kingTo, uint64_t kingFrom, bool whiteking, int moveScore = 0)
+            : pieceMoved(moved), fromSquare(from), toSquare(to), pieceCaptured(nullptr), capture(false), castle(cas), kingToSquare(kingTo), kingFromSquare(kingFrom), promotion(false), whiteKing(whiteking), score(moveScore) {}
 
+    // Constructor for pawn promotion moves
+    Move(uint64_t* moved, uint64_t from, uint64_t to, uint64_t* captured = nullptr, bool cap = false, bool prom = true, int moveScore = 0)
+            : pieceMoved(moved), fromSquare(from), toSquare(to), pieceCaptured(captured), capture(cap), castle(false), kingToSquare(0), kingFromSquare(0), promotion(prom), score(moveScore) {}
 };
+
 
 class ChessBoard {
 public:
-    const int pawnValue = 15;
-    const int knightValue = 45;
-    const int bishopValue = 45;
-    const int rookValue = 70;
-    const int queenValue = 200;
+    int roundnr = 0;
+    vector<Move> rootMoves;
+    Move BestMover;
+    vector<Move> quiesceMoves;
+    std::map<int, uint64_t> northMoves, southMoves, eastMoves, westMoves;
+    static const int pawnValue = 10;
+    static const int knightValue = 28;
+    static const int bishopValue = 28;
+    static const int rookValue = 40;
+    static const int queenValue = 70;
+    const int singleMoveOffsetWhite = 8;
+    const int singleMoveOffsetBlack = -8;
+    const int doubleMoveOffsetWhite = 16;
+    const int doubleMoveOffsetBlack = -16;
+    const int doubleMoveStartRowWhite = 1;
+    const int doubleMoveStartRowBlack = 6;
+    const std::vector<int> attackOffsetsWhite = {7, 9};
+    const std::vector<int> attackOffsetsBlack = {-9, -7};
+    const std::vector<int> knightOffsets{-17, -15, -10, -6, 6, 10, 15, 17};
+    const std::vector<int> pawnPositionalValue = {
+            0, 0, 0, 0, 0, 0, 0, 0,
+            3, 2, 1, -1, -1, -1, 1, 2,
+            2, 2, 4, 6, 6, 4, 2, 2,
+            1, 1, 2, 5, 5, 2, 1, 1,
+            0, 0, 1, 3, 3, 1, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            5, 5, 5, 5, 5, 5, 5, 5,
+            0, 0, 0, 0, 0, 0, 0, 0,
+    };
+
+
+
+
+    // Positional values for knights
+    const std::vector<int> knightPositionalValue = {
+            -5, -2, -2, -2, -2, -2, -2, -5,
+            -2,  0,  0,  3,  3,  0,  0, -2,
+            -2,  0,  3,  6,  6,  3,  0, -2,
+            -2,  3,  6,  8,  8,  6,  3, -2,
+            -2,  3,  6,  8,  8,  6,  3, -2,
+            -2,  0,  3,  6,  6,  3,  0, -2,
+            -2,  0,  0,  3,  3,  0,  0, -2,
+            -5, -2, -2, -2, -2, -2, -2, -5,
+    };
+
+
+
+
+    const std::vector<int> bishopPositionalValue = {
+            -5, -2, -2, -2, -2, -2, -2, -5,
+            -2, 0, 0, 0, 0, 0, 0, -2,
+            -2, 0, 5, 5, 5, 5, 0, -2,
+            -2, 0, 5, 8, 8, 5, 0, -2,
+            -2, 0, 5, 8, 8, 5, 0, -2,
+            -2, 0, 5, 5, 5, 5, 0, -2,
+            -2, 0, 0, 0, 0, 0, 0, -2,
+            -5, -2, -2, -2, -2, -2, -5, -5,
+    };
+
+
+    const std::vector<int> rookPositionalValue = {
+            0, 0, 0, 5, 5, 0, 0, 0,
+            5, 10, 10, 5, 5, 10, 10, 5,
+            -5, 0, 0, 5, 5, 0, 0, -5,
+            -5, 0, 0, 5, 5, 0, 0, -5,
+            -5, 0, 0, 5, 5, 0, 0, -5,
+            -5, 0, 0, 5, 5, 0, 0, -5,
+            5, 10, 10, 10, 10, 10, 10, 5,
+            0, 0, 0, 5, 5, 0, 0, 0,
+    };
+
+
+    const std::vector<int> queenPositionalValue = {
+            -2, -2, -2, -2, -2, -2, -2, -2,
+            -2, 0, 0, 0, 0, 0, 0, -2,
+            -2, 0, 3, 3, 3, 3, 0, -2,
+            -2, 0, 3, 5, 5, 3, 0, -2,
+            -2, 0, 3, 5, 5, 3, 0, -2,
+            -2, 0, 3, 3, 3, 3, 0, -2,
+            -2, 0, 0, 0, 0, 0, 0, -2,
+            -2, -2, -2, -2, -2, -2, -2, -2,
+    };
+
+
 
     // Additional score for capturing a more valuable piece with a less valuable piece
-    const int captureBonus = 10;
+    const int captureBonus = 2;
     uint64_t whitePawns{};
     uint64_t whiteRooks{};
     uint64_t whiteKnights{};
@@ -51,7 +149,7 @@ public:
     uint64_t occupiedSquares{}; // Represents all occupied squares
     uint64_t whitePieces{}; // Represents all white pieces
     uint64_t blackPieces{}; // Represents all black pieces
-    uint64_t* previousMovePieceBitboard{};
+    uint64_t *previousMovePieceBitboard{};
     uint64_t previousMoveFrom{};
     uint64_t previousMoveTo{};
     bool whitesTurn = true;
@@ -62,6 +160,38 @@ public:
 
     ChessBoard() {
         resetBoard();
+        precomputeMoves();
+    }
+    void precomputeMoves() {
+        for (int square = 0; square < 64; ++square) {
+            uint64_t north = 0, south = 0, east = 0, west = 0;
+            int row = square / 8, col = square % 8;
+
+            // North Moves
+            for (int r = row + 1; r < 8; ++r) {
+                north |= 1ULL << (r * 8 + col);
+            }
+
+            // South Moves
+            for (int r = row - 1; r >= 0; --r) {
+                south |= 1ULL << (r * 8 + col);
+            }
+
+            // East Moves
+            for (int c = col + 1; c < 8; ++c) {
+                east |= 1ULL << (row * 8 + c);
+            }
+
+            // West Moves
+            for (int c = col - 1; c >= 0; --c) {
+                west |= 1ULL << (row * 8 + c);
+            }
+
+            northMoves[square] = north;
+            southMoves[square] = south;
+            eastMoves[square] = east;
+            westMoves[square] = west;
+        }
     }
 
     std::vector<Move> moveHistory;
@@ -94,8 +224,6 @@ public:
 
         return possibleMoves;
     }
-
-
 
 
     [[nodiscard]] PieceType getPieceTypeOnSquare(int theSquare) const {
@@ -153,13 +281,13 @@ public:
     }
 
 
-
     // Example move function: Move a piece from one square to another
     // This is a simplistic example. A real move function would need to be much more comprehensive.
-    void movePiece(uint64_t& pieceBitboard, uint64_t fromSquare, uint64_t toSquare, uint64_t* capturedPieceBitboard = nullptr) {
+    void movePiece(uint64_t &pieceBitboard, uint64_t fromSquare, uint64_t toSquare,
+                   uint64_t *capturedPieceBitboard = nullptr) {
         // Log the move before making it
         bool capture = capturedPieceBitboard && (*capturedPieceBitboard & toSquare);
-        moveHistory.emplace_back(&pieceBitboard, fromSquare, toSquare, capturedPieceBitboard, capture);
+        moveHistory.emplace_back(&pieceBitboard, fromSquare, toSquare, capturedPieceBitboard, capture, false);
 
         // Make the move
         pieceBitboard &= ~fromSquare;
@@ -174,28 +302,90 @@ public:
         //Board();
     }
 
+    void movePiece(Move move) {
+
+        moveHistory.push_back(move);
+        if (move.castle) {
+            *move.pieceMoved &= ~move.fromSquare;
+            *move.pieceMoved |= move.toSquare;
+            if (move.whiteKing) {
+                whiteKing &= ~move.kingFromSquare;
+                whiteKing |= move.kingToSquare;
+            } else {
+                blackKing &= ~move.kingFromSquare;
+                blackKing |= move.kingToSquare;
+            }
+        }/*
+        else if (move.promotion){
+            *move.pieceMoved &= ~move.fromSquare;
+            // Add a queen to the destination square
+            uint64_t* queenBitboard = whitePawns ? &whiteQueens : &blackQueens;
+            *queenBitboard |= move.toSquare;
+        }*/else {
+
+            if (move.capture) {
+                int score = getPieceValue(getPieceTypeOnSquare(bitScanForward(move.toSquare)));
+                move.score += score;
+                *move.pieceCaptured &= ~move.toSquare;
+            }
+            *move.pieceMoved &= ~move.fromSquare;
+            *move.pieceMoved |= move.toSquare;
+
+            /*
+            if (move.capture) {
+                if (isSquareThreatened(bitScanForward(move.toSquare), !isSquareOccupiedByWhite((move.toSquare)))) {
+                    int score = getPieceValue(getPieceTypeOnSquare(bitScanForward(move.toSquare)));
+                    int score2 = getPieceValue(getPieceTypeOnSquare(bitScanForward(move.fromSquare)));
+                    if (score2 > score) {
+                        move.score -= 10000;
+                    }else{
+                        move.score += score;
+                    }
+                }else{
+                    move.score += getPieceValue(getPieceTypeOnSquare(bitScanForward(move.toSquare)));
+                }
+                *move.pieceCaptured &= ~move.toSquare;
+            }
+            *move.pieceMoved &= ~move.fromSquare;
+            *move.pieceMoved |= move.toSquare;
+             */
+        }
+
+
+        updateOccupiedSquares();
+    }
+
     //reset the previous move
     void resetPreviousMove() {
         if (!moveHistory.empty()) {
-            Move& lastMove = moveHistory.back();
-
-            // Undo the move
-            *lastMove.pieceMoved &= ~lastMove.toSquare; // Remove the piece from its destination
-            *lastMove.pieceMoved |= lastMove.fromSquare; // Place the piece back to its starting square
-
-            // If there was a capture, restore the captured piece
-            if (lastMove.capture && lastMove.pieceCaptured) {
-                *lastMove.pieceCaptured |= lastMove.toSquare;
+            Move lastMove = moveHistory.back(); // Capture the last move for readability
+            if (!lastMove.castle) {
+                *lastMove.pieceMoved |= lastMove.fromSquare; // Restore the piece to its original square
+                *lastMove.pieceMoved &= ~lastMove.toSquare; // Clear the piece's new square
+                if (lastMove.capture) {
+                    *lastMove.pieceCaptured |= lastMove.toSquare; // Restore the captured piece
+                }
+            } else {
+                *lastMove.pieceMoved |= lastMove.fromSquare;
+                *lastMove.pieceMoved &= ~lastMove.toSquare;
+                if (lastMove.whiteKing) {
+                    whiteKing |= lastMove.kingFromSquare;
+                    whiteKing &= ~lastMove.kingToSquare;
+                } else {
+                    blackKing |= lastMove.kingFromSquare;
+                    blackKing &= ~lastMove.kingToSquare;
+                }
             }
+            moveHistory.pop_back(); // Remove the last move from history after resetting it
+            // Switch turn
 
-            moveHistory.pop_back(); // Remove the last move from history
             updateOccupiedSquares();
         }
-        //printBoard();
     }
 
+
     // Function to print the board - mainly for debugging purposes
-    void printBoard() const  {
+    void printBoard() const {
         for (int rank = 7; rank >= 0; rank--) {
             for (int file = 0; file < 8; file++) {
                 uint64_t position = 1ULL << (rank * 8 + file);
@@ -288,13 +478,12 @@ public:
     std::vector<Move> generateKnightMoves(uint64_t knightPosition) {
         std::vector<Move> moves;
         int startSquare = bitScanForward(knightPosition);
-        const std::vector<int> offsets = {-17, -15, -10, -6, 6, 10, 15, 17};
         bool isWhite = (whitePieces & knightPosition) != 0;
         uint64_t ownPieces = isWhite ? whitePieces : blackPieces;
         uint64_t enemyPieces = isWhite ? blackPieces : whitePieces;
-        uint64_t* knightBitboard = isWhite ? &whiteKnights : &blackKnights;
+        uint64_t *knightBitboard = isWhite ? &whiteKnights : &blackKnights;
 
-        for (int offset : offsets) {
+        for (int offset: knightOffsets) {
             int targetSquare = startSquare + offset;
 
             // Calculate row and column to prevent moves that "wrap" around the board.
@@ -308,23 +497,26 @@ public:
             if (targetSquare < 0 || targetSquare >= 64) continue;
 
             uint64_t targetBitboard = 1ULL << targetSquare;
-            // Ensure target square is not occupied by own piece; allow moves to empty squares or squares with enemy pieces.
-            if (ownPieces & targetBitboard) continue;
+            if (ownPieces & targetBitboard) continue; // Skip if own piece occupies the target square
 
             bool isCapture = (enemyPieces & targetBitboard) != 0;
-            uint64_t* capturedPieceBitboard = nullptr;
+            uint64_t *capturedPieceBitboard = nullptr;
             if (isCapture) {
                 capturedPieceBitboard = getBitboardPointerByPieceType(getPieceTypeOnSquare(targetSquare), !isWhite);
             }
 
-            moves.emplace_back(knightBitboard, 1ULL << startSquare, 1ULL << targetSquare, capturedPieceBitboard, isCapture);
+            moves.emplace_back(knightBitboard, 1ULL << startSquare, 1ULL << targetSquare, capturedPieceBitboard,
+                               isCapture, false);
         }
 
         return moves;
     }
 
+    // Other member functions...
 
-
+    bool isPromotionSquare(int square, bool isWhite) {
+        return isWhite ? square / 8 == 7 : square / 8 == 0;
+    }
 
 
     std::vector<Move> generatePawnMoves(uint64_t pawnPosition) {
@@ -332,38 +524,38 @@ public:
         int startSquare = bitScanForward(pawnPosition);
         bool isWhite = (whitePieces & pawnPosition) != 0;
         uint64_t enemyPieces = isWhite ? blackPieces : whitePieces;
-        uint64_t* pawnBitboard = isWhite ? &whitePawns : &blackPawns;
+        uint64_t *pawnBitboard = isWhite ? &whitePawns : &blackPawns;
         uint64_t occupiedSquares = whitePieces | blackPieces;
-        int startRow = startSquare / 8;
 
-        // Define movement direction and starting row for pawn double move based on color
-        int singleMoveOffset = isWhite ? 8 : -8;
-        int doubleMoveOffset = isWhite ? 16 : -16;
-        int doubleMoveStartRow = isWhite ? 1 : 6;
-        int attackOffsets[] = {isWhite ? 7 : -9, isWhite ? 9 : -7};
+        // Directional and starting row settings for pawn moves
+        int singleMoveOffset = isWhite ? singleMoveOffsetWhite : singleMoveOffsetBlack; // Moving up or down the board
+        int doubleMoveOffset = isWhite ? doubleMoveOffsetWhite : doubleMoveOffsetBlack; // Two squares forward
+        int doubleMoveStartRow = isWhite ? doubleMoveStartRowWhite : doubleMoveStartRowBlack; // Starting row for a double move
+        std::vector<int> attackOffsets = isWhite ? std::vector<int>{7, 9} : std::vector<int>{-7, -9}; // Diagonal attacks
 
-        // Single move
+        // Single forward move
         int targetSquare = startSquare + singleMoveOffset;
         if (targetSquare >= 0 && targetSquare < 64 && !(occupiedSquares & (1ULL << targetSquare))) {
-            moves.emplace_back(pawnBitboard, 1ULL << startSquare, 1ULL << targetSquare);
+            // Since we're not handling promotions, directly create the move without a promotion check
+            moves.emplace_back(pawnBitboard, 1ULL << startSquare, 1ULL << targetSquare, nullptr, false, false);
 
-            // Double move
-            int doubleMoveSquare = startSquare + doubleMoveOffset;
-            if (startRow == doubleMoveStartRow && !(occupiedSquares & (1ULL << doubleMoveSquare))) {
-                moves.emplace_back(pawnBitboard, 1ULL << startSquare, 1ULL << doubleMoveSquare);
+            // Double move, check if the pawn is on its starting row and the target square for the double move is not occupied
+            if (startSquare / 8 == doubleMoveStartRow && !(occupiedSquares & (1ULL << (startSquare + doubleMoveOffset)))) {
+                moves.emplace_back(pawnBitboard, 1ULL << startSquare, 1ULL << (startSquare + doubleMoveOffset), nullptr, false, false);
             }
         }
 
         // Attack moves
         for (int offset : attackOffsets) {
             targetSquare = startSquare + offset;
-            if (targetSquare >= 0 && targetSquare < 64 && (enemyPieces & (1ULL << targetSquare))) {
-                int targetCol = targetSquare % 8;
-                int startCol = startSquare % 8;
-                // Ensure attack move does not "wrap" around the board
-                if (abs(targetCol - startCol) == 1) {
-                    moves.emplace_back(pawnBitboard, 1ULL << startSquare, 1ULL << targetSquare, getBitboardPointerByPieceType(getPieceTypeOnSquare(targetSquare), !isWhite), true);
-                }
+            // Check valid square range, prevent wrap-around, and ensure there is an enemy piece to capture
+            if (targetSquare >= 0 && targetSquare < 64 &&
+                ((startSquare % 8 != 0) || (offset != -9 && offset != 7)) && // Not wrapping left for left attacks
+                ((startSquare % 8 != 7) || (offset != -7 && offset != 9)) && // Not wrapping right for right attacks
+                (enemyPieces & (1ULL << targetSquare))) {
+                // Capture move
+                moves.emplace_back(pawnBitboard, 1ULL << startSquare, 1ULL << targetSquare,
+                                   getBitboardPointerByPieceType(getPieceTypeOnSquare(targetSquare), !isWhite), true, false);
             }
         }
 
@@ -377,12 +569,43 @@ public:
         bool isWhite = (whitePieces & rookPosition) != 0;
         uint64_t ownPieces = isWhite ? whitePieces : blackPieces;
         uint64_t enemyPieces = isWhite ? blackPieces : whitePieces;
-        uint64_t* rookBitboard = isWhite ? &whiteRooks : &blackRooks;
-        int offsets[] = {1, -1, 8, -8};
+        uint64_t *rookBitboard = isWhite ? &whiteRooks : &blackRooks;
+        uint64_t allPieces = whitePieces | blackPieces;
+        int offsets[] = {1, -1, 8, -8}; // Right, Left, Down, Up
 
         int startRow = startSquare / 8, startCol = startSquare % 8;
 
         for (int offset : offsets) {
+            int targetSquare = startSquare;
+            do {
+                targetSquare += offset;
+                if (targetSquare < 0 || targetSquare >= 64) break; // Check board boundaries
+
+                // Calculate the row and column to prevent wrapping
+                int targetRow = targetSquare / 8, targetCol = targetSquare % 8;
+
+                // Prevent wrapping around the board
+                if (offset == 1 || offset == -1) {
+                    if (targetRow != startRow) break; // Horizontal move, ensure row doesn't change
+                } else {
+                    if (targetCol != startCol) break; // Vertical move, ensure column doesn't change
+                }
+
+                uint64_t targetBitboard = 1ULL << targetSquare;
+                if (targetBitboard & allPieces) { // If any piece is on the target square
+                    if (targetBitboard & enemyPieces) { // If enemy piece, include as capture
+                        PieceType pieceType = getPieceTypeOnSquare(targetSquare);
+                        uint64_t *capturedPieceBitboard = getBitboardPointerByPieceType(pieceType, !isWhite);
+                        moves.emplace_back(rookBitboard, 1ULL << startSquare, targetBitboard, capturedPieceBitboard, true, false);
+                    }
+                    break; // Stop if any piece is encountered
+                } else {
+                    moves.emplace_back(rookBitboard, 1ULL << startSquare, targetBitboard, nullptr, false, false);
+                }
+            } while (true);
+        }
+        /* OLD FUNCTION RETURN IF NEW STARTS LAGGING
+        for (int offset: offsets) {
             int targetSquare = startSquare + offset;
             while (targetSquare >= 0 && targetSquare < 64) {
                 int targetRow = targetSquare / 8, targetCol = targetSquare % 8;
@@ -403,13 +626,14 @@ public:
                 }
 
                 bool isCapture = enemyPieces & targetBitboard;
-                uint64_t* capturedPieceBitboard = nullptr;
+                uint64_t *capturedPieceBitboard = nullptr;
                 if (isCapture) {
                     PieceType pieceType = getPieceTypeOnSquare(targetSquare);
                     capturedPieceBitboard = getBitboardPointerByPieceType(pieceType, !isWhite);
                 }
 
-                moves.emplace_back(rookBitboard, 1ULL << startSquare, 1ULL << targetSquare, capturedPieceBitboard, isCapture);
+                moves.emplace_back(rookBitboard, 1ULL << startSquare, 1ULL << targetSquare, capturedPieceBitboard,
+                                   isCapture, false);
 
                 if (isCapture) {
                     // Capture move; no further moves in this direction
@@ -419,11 +643,90 @@ public:
                 targetSquare += offset; // Continue in the same direction
             }
         }
+         */
+// Move(uint64_t* moved, uint64_t from, uint64_t to, bool cas, uint64_t kingTo, uint64_t kingFrom, bool whiteking)
+        //add castling as a move
+        //if theres no pieces between the king and the rook
+        if (isWhite) {
+            //first check white rook at position 0, and if king is at position 4
+            if (rookPosition == 0x1ULL && whiteKing == 0x10ULL) {
+                //check if there are no pieces between the king and the rook
+                if ((occupiedSquares & 0x60ULL) == 0) {
+                    moves.emplace_back(&whiteRooks, 0x1ULL, 0x20ULL, true, 0x40ULL, 0x10ULL, true);
+                }
+
+            }
+            //check if white rook is at position 7, and if king is at position 4
+            if (rookPosition == 0x80ULL && whiteKing == 0x10ULL) {
+                //check if there are no pieces between the king and the rook
+                if ((occupiedSquares & 0x60ULL) == 0) {
+                    moves.emplace_back(&whiteRooks, 0x80ULL, 0x10ULL, true, 0x40ULL, 0x10ULL, true);
+                }
+            }
+        } else {
+            if (rookPosition == 0x100000000000000ULL && blackKing == 0x1000000000000ULL) {
+                //check if there are no pieces between the king and the rook
+                if ((occupiedSquares & 0x7000000000000000ULL) == 0) {
+                    moves.emplace_back(&blackRooks, 0x100000000000000ULL, 0x1000000000000ULL, true,
+                                       0x4000000000000000ULL, 0x1000000000000ULL, false);
+                }
+            }
+            //check if white rook is at position 7, and if king is at position 4
+            if (rookPosition == 0x8000000000000000ULL && blackKing == 0x1000000000000ULL) {
+                //check if there are no pieces between the king and the rook
+                if ((occupiedSquares & 0xE000000000000000ULL) == 0) {
+                    moves.emplace_back(&blackRooks, 0x8000000000000000ULL, 0x1000000000000ULL, true,
+                                       0x2000000000000000ULL, 0x1000000000000ULL, false);
+                }
+            }
+
+
+        }
+
 
         return moves;
     }
+/*
+    std::vector<Move> generateBishopMoves(uint64_t bishopPosition) {
+        std::vector<Move> moves;
+        int startSquare = bitScanForward(bishopPosition);
+        bool isWhite = (whitePieces & bishopPosition) != 0;
+        uint64_t ownPieces = isWhite ? whitePieces : blackPieces;
+        uint64_t enemyPieces = isWhite ? blackPieces : whitePieces;
+        uint64_t *bishopBitboard = isWhite ? &whiteBishops : &blackBishops;
+        uint64_t allPieces = whitePieces | blackPieces;
 
+        int directions[] = {7, 9, -7, -9}; // Diagonal directions
+        for (int dir : directions) {
+            int targetSquare = startSquare + dir;
+            while (targetSquare >= 0 && targetSquare < 64 &&
+                   !((1ULL << targetSquare) & ownPieces) && // Not landing on own piece
+                   (((targetSquare / 8) - (startSquare / 8)) == ((targetSquare % 8) - (startSquare % 8)) ||
+                    ((targetSquare / 8) - (startSquare / 8)) == -((targetSquare % 8) - (startSquare % 8)))) { // Diagonal movement
+                // If path is blocked by any piece, stop
+                if ((1ULL << targetSquare) & allPieces) {
+                    if ((1ULL << targetSquare) & enemyPieces) { // Capture
+                        uint64_t *capturedPieceBitboard = getBitboardPointerByPieceType(getPieceTypeOnSquare(targetSquare), !isWhite);
+                        moves.emplace_back(bishopBitboard, 1ULL << startSquare, 1ULL << targetSquare, capturedPieceBitboard, true, false);
+                    }
+                    break; // Blocker encountered, stop looking further in this direction
+                } else { // No piece, add as a potential move
+                    moves.emplace_back(bishopBitboard, 1ULL << startSquare, 1ULL << targetSquare, nullptr, false, false);
+                }
+                targetSquare += dir; // Move to the next square in the same direction
+                // Ensure we don't wrap around the board
+                if (abs((targetSquare % 8) - (startSquare % 8)) > 1) break;
+            }
+        }
 
+        return moves;
+    }
+*/
+
+    //OLD FUNCTION FOR BISHOP REVERT IF NEEDED
+    //OLD FUNCTION FOR BISHOP REVERT IF NEEDED
+    //OLD FUNCTION FOR BISHOP REVERT IF NEEDED
+    //OLD FUNCTION FOR BISHOP REVERT IF NEEDED
 
     std::vector<Move> generateBishopMoves(uint64_t bishopPosition) {
         std::vector<Move> moves;
@@ -432,10 +735,10 @@ public:
         bool isWhite = (whitePieces & bishopPosition) != 0;
         uint64_t ownPieces = isWhite ? whitePieces : blackPieces;
         uint64_t enemyPieces = isWhite ? blackPieces : whitePieces;
-        uint64_t* bishopBitboard = isWhite ? &whiteBishops : &blackBishops;
+        uint64_t *bishopBitboard = isWhite ? &whiteBishops : &blackBishops;
         int offsets[] = {7, 9, -7, -9};
 
-        for (int offset : offsets) {
+        for (int offset: offsets) {
             int targetSquare = startSquare + offset;
             while (targetSquare >= 0 && targetSquare < 64) {
                 int targetRow = targetSquare / 8, targetCol = targetSquare % 8;
@@ -449,12 +752,13 @@ public:
                 if (ownPieces & targetBitboard) break; // Own piece blocks further movement
 
                 bool isCapture = enemyPieces & targetBitboard;
-                uint64_t* capturedPieceBitboard = nullptr;
+                uint64_t *capturedPieceBitboard = nullptr;
                 if (isCapture) {
                     capturedPieceBitboard = getBitboardPointerByPieceType(getPieceTypeOnSquare(targetSquare), !isWhite);
                 }
 
-                moves.emplace_back(bishopBitboard, 1ULL << startSquare, 1ULL << targetSquare, capturedPieceBitboard, isCapture);
+                moves.emplace_back(bishopBitboard, 1ULL << startSquare, 1ULL << targetSquare, capturedPieceBitboard,
+                                   isCapture, false);
 
                 if (isCapture) break; // Capture stops further traversal in this direction
 
@@ -470,7 +774,7 @@ public:
 
 
 
-    static bool isValidRookMove(int startSquare, int targetSquare){
+    static bool isValidRookMove(int startSquare, int targetSquare) {
         int startRank = startSquare / 8, startFile = startSquare % 8;
         int targetRank = targetSquare / 8, targetFile = targetSquare % 8;
 
@@ -481,7 +785,7 @@ public:
         return startRank == targetRank || startFile == targetFile;
     }
 
-    static bool isValidDiagonalMove(int startSquare, int targetSquare){
+    static bool isValidDiagonalMove(int startSquare, int targetSquare) {
         int startRank = startSquare / 8, startFile = startSquare % 8;
         int targetRank = targetSquare / 8, targetFile = targetSquare % 8;
 
@@ -494,50 +798,56 @@ public:
 
     std::vector<Move> generateQueenMoves(uint64_t queenPosition) {
         std::vector<Move> moves;
-        int startSquare = bitScanForward(queenPosition);
+
+        // Determine if the queen is white or black based on the position
         bool isWhite = (whitePieces & queenPosition) != 0;
         uint64_t ownPieces = isWhite ? whitePieces : blackPieces;
         uint64_t enemyPieces = isWhite ? blackPieces : whitePieces;
-        uint64_t* queenBitboard = isWhite ? &whiteQueens : &blackQueens;
-        // Combine bishop and rook offsets for queen movement
+        uint64_t *queenBitboard = isWhite ? &whiteQueens : &blackQueens;
+        // Direction offsets for a queen (combines rook and bishop movements)
         int offsets[] = {7, 9, -7, -9, 1, -1, 8, -8};
 
-        for (int offset : offsets) {
-            int targetSquare = startSquare + offset;
+        // Handle multiple queens on the bitboard
+        while (queenPosition) {
+            int startSquare = bitScanForward(queenPosition); // Find the least significant bit
+            queenPosition &= queenPosition - 1; // Remove the least significant bit
 
-            while (true) { // Loop until break
-                int targetRow = targetSquare / 8;
-                int targetCol = targetSquare % 8;
+            for (int offset : offsets) {
+                int targetSquare = startSquare;
+                int previousRow = startSquare / 8, previousCol = startSquare % 8;
+                while (true) {
+                    targetSquare += offset;
+                    if (targetSquare < 0 || targetSquare >= 64) break; // Out of bounds
 
-                // Validate movement within board bounds and for diagonals, ensure proper row and column difference
-                if (targetRow < 0 || targetRow >= 8 || targetCol < 0 || targetCol >= 8 ||
-                    (abs(offset) == 7 || abs(offset) == 9) && abs(targetRow - startSquare / 8) != abs(targetCol - startSquare % 8)) {
-                    break;
+                    int targetRow = targetSquare / 8, targetCol = targetSquare % 8;
+
+                    // Prevent wrapping across the board
+                    if (abs(targetRow - previousRow) > 1 || abs(targetCol - previousCol) > 1) break;
+
+                    uint64_t targetBitboard = 1ULL << targetSquare;
+                    if (ownPieces & targetBitboard) {
+                        // Blocked by own piece
+                        break;
+                    }
+
+                    bool isCapture = enemyPieces & targetBitboard;
+                    uint64_t *capturedPieceBitboard = nullptr;
+                    if (isCapture) {
+                        PieceType pieceType = getPieceTypeOnSquare(targetSquare);
+                        capturedPieceBitboard = getBitboardPointerByPieceType(pieceType, !isWhite);
+                    }
+
+                    moves.emplace_back(queenBitboard, 1ULL << startSquare, 1ULL << targetSquare,
+                                       capturedPieceBitboard, isCapture, false);
+
+                    if (isCapture) {
+                        break; // Stop at capture
+                    }
+
+                    // Update previous position for the next iteration
+                    previousRow = targetRow;
+                    previousCol = targetCol;
                 }
-
-                uint64_t targetBitboard = 1ULL << targetSquare;
-                if (ownPieces & targetBitboard) {
-                    // Own piece is blocking further movement
-                    break;
-                }
-
-                bool isCapture = enemyPieces & targetBitboard;
-                uint64_t* capturedPieceBitboard = nullptr;
-                if (isCapture) {
-                    PieceType pieceType = getPieceTypeOnSquare(targetSquare);
-                    capturedPieceBitboard = getBitboardPointerByPieceType(pieceType, !isWhite);
-                }
-
-                // Adjust score based on position; for simplicity, this example keeps the logic as is
-
-                moves.emplace_back(queenBitboard, 1ULL << startSquare, 1ULL << targetSquare, capturedPieceBitboard, isCapture);
-
-                if (isCapture) {
-                    // Stop movement after capture
-                    break;
-                }
-
-                targetSquare += offset; // Proceed to the next square in the current direction
             }
         }
 
@@ -551,7 +861,7 @@ public:
         bool isWhite = (whitePieces & kingPosition) != 0;
         uint64_t ownPieces = isWhite ? whitePieces : blackPieces;
         uint64_t enemyPieces = isWhite ? blackPieces : whitePieces;
-        uint64_t* kingBitboard = isWhite ? &whiteKing : &blackKing;
+        uint64_t *kingBitboard = isWhite ? &whiteKing : &blackKing;
 
         // Assuming 'isSquareInBounds' checks if targetSquare is a valid board position.
         // If its logic is based on 'startSquare' and 'targetSquare', consider optimizing it
@@ -559,7 +869,7 @@ public:
 
         int offsets[] = {1, -1, 8, -8, 7, 9, -7, -9};
 
-        for (int offset : offsets) {
+        for (int offset: offsets) {
             int targetSquare = startSquare + offset;
 
             // Continue if the target square is not on the board
@@ -570,69 +880,69 @@ public:
             if (ownPieces & targetBitboard) continue;
 
             bool isCapture = enemyPieces & targetBitboard;
-            uint64_t* capturedPieceBitboard = nullptr;
+            uint64_t *capturedPieceBitboard = nullptr;
             if (isCapture) {
                 PieceType pieceType = getPieceTypeOnSquare(targetSquare);
                 capturedPieceBitboard = getBitboardPointerByPieceType(pieceType, !isWhite);
             }
-            moves.emplace_back(kingBitboard, 1ULL << startSquare, 1ULL << targetSquare, capturedPieceBitboard, isCapture);
+            moves.emplace_back(kingBitboard, 1ULL << startSquare, 1ULL << targetSquare, capturedPieceBitboard,
+                               isCapture, false);
         }
         return moves;
     }
 
 
-
     bool playerMove(int startRank, int startFile, int targetRank, int targetFile) {
+        int i = 0;
         uint64_t fromMask = 1ULL << (startRank * 8 + startFile);
         uint64_t toMask = 1ULL << (targetRank * 8 + targetFile);
         bool isWhite = (whitePieces & fromMask) != 0;
         if (isWhite != whitesTurn) return false; // It's not the player's turn
-        PieceType pieceType = getPieceTypeOnSquare(bitScanForward(fromMask)); // Ensure this method exists and works as expected.
+        PieceType pieceType = getPieceTypeOnSquare(
+                bitScanForward(fromMask)); // Ensure this method exists and works as expected.
         if (pieceType == None) return false; // No piece to move
         // First, check if the king is in check
         uint64_t king = isWhite ? whiteKing : blackKing;
         if (isKingInCheck(true)) {
+            std::cout << "King is in check!" << std::endl;
             // Generate all possible moves for the player
             std::vector<Move> possibleMoves = generateMovesForPiece(fromMask, pieceType);
             // Filter out moves that don't resolve the check
 
             std::vector<Move> movesThatResolveCheck = filterMovesThatResolveCheck(possibleMoves, whitesTurn);
             // Check if the move is valid
-            for (const Move& move : movesThatResolveCheck) {
+            for (const Move &move: movesThatResolveCheck) {
                 if (move.toSquare == toMask) {
                     // The move is valid, execute it
-                    uint64_t* pieceBitboard = getBitboardPointerByPieceType(pieceType, isSquareOccupiedByWhite(bitScanForward(fromMask)));
-                    uint64_t* capturedPieceBitboard = isSquareOccupied(bitScanForward(fromMask)) ? getBitboardPointerByPieceType(getPieceTypeOnSquare(bitScanForward(toMask)), !isSquareOccupiedByWhite(bitScanForward(fromMask))) : nullptr;
-                    movePiece(*pieceBitboard, fromMask, toMask, capturedPieceBitboard);
+                    movePiece(move);
                     // Note: Visual and state updates related to the GUI should be handled in the calling function or component.
                     whitesTurn = !whitesTurn;
+                    generateBotMoves();
                     return true; // Move was successfully applied
                 }
             }
             return false;
             // No valid move executed, either the move didn't resolve the check or wasn't valid
-        }else{
-            std::cout << "King is not in check" << std::endl;
+        } else {
+
             // Generate possible moves for the piece
             std::vector<Move> possibleMoves = generateMovesForPiece(fromMask, pieceType);
 
-            for (const Move& move : possibleMoves) {
-                movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured); // Apply the move temporarily
+            for (const Move &move: possibleMoves) {
+                movePiece(move); // Apply the move temporarily
 
                 // Check if OUR king is in check after this move
-                bool ourKingInCheckAfterMove = isKingInCheck( true);
+                bool ourKingInCheckAfterMove = isKingInCheck(true);
 
                 resetPreviousMove(); // Undo the move
 
                 // Only proceed if our king isn't in check as a result of this move
                 if (!ourKingInCheckAfterMove && move.toSquare == toMask) {
                     // The move is valid and does not place our king in check
-                    uint64_t* pieceBitboard = getBitboardPointerByPieceType(pieceType, isWhite);
-                    uint64_t* capturedPieceBitboard = isSquareOccupied(bitScanForward(toMask)) ? getBitboardPointerByPieceType(getPieceTypeOnSquare(bitScanForward(toMask)), !isWhite) : nullptr;
-
-                    movePiece(*pieceBitboard, fromMask, toMask, capturedPieceBitboard);
+                    movePiece(move);
                     whitesTurn = !whitesTurn;
                     generateBotMoves();
+                    i++;
                     return true; // Successfully executed move
                 }
             }
@@ -643,6 +953,16 @@ public:
     }
 
     bool isKingInCheck(bool isWhite) {
+        // Determine positions and enemy color
+        if (isSquareThreatened(bitScanForward(isWhite ? (whiteKing) : (blackKing)), isWhite)){
+            return true;
+        }
+        return false;
+
+
+    }
+
+    int isKingInCheckInt(bool isWhite) {
         uint64_t enemyPieces = isWhite ? blackPieces : whitePieces;
         uint64_t king = isWhite ? whiteKing : blackKing;
         // Check if any enemy piece can attack the king
@@ -650,7 +970,7 @@ public:
             uint64_t position = 1ULL << i;
             if (enemyPieces & position) {
                 PieceType pieceType = getPieceTypeOnSquare(i);
-                if (pieceType == isWhite? blackPawns : whitePawns){
+                if (pieceType == isWhite ? blackPawns : whitePawns) {
                     int kingPosition = bitScanForward(king);
                     int pawnRow = i / 8, pawnCol = i % 8;
                     int kingRow = kingPosition / 8, kingCol = kingPosition % 8;
@@ -660,22 +980,23 @@ public:
 
                     // For white king, check black pawns; for black king, check white pawns
                     if ((isWhite && rowDiff == -1 && colDiff == 1) || (!isWhite && rowDiff == 1 && colDiff == 1)) {
-                        return true; // Pawn can attack the king diagonally
+                        return 1; // Pawn can attack the king diagonally
                     }
                 }
                 std::vector<Move> possibleMoves = generateMovesForPiece(position, pieceType);
-                for (const Move& move : possibleMoves) {
+                for (const Move &move: possibleMoves) {
                     if (move.toSquare == king) {
-                        return true;
+                        return 1;
                     }
                 }
             }
         }
+        return 0;
     }
 
     bool checkIfMoveResultsInCheck(Move move, bool isWhite) {
         // Simulate the move
-        movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured);
+        movePiece(move);
         // Check if the move results in check
         bool isCheck = isWhite ? isKingInCheck(whiteKing) : isKingInCheck(blackKing);
 
@@ -685,9 +1006,9 @@ public:
         return isCheck;
     }
 
-    bool resolveKingCheck(Move move, bool isWhite){
+    bool resolveKingCheck(Move move, bool isWhite) {
         // Simulate the move
-        movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured);
+        movePiece(move);
 
         // Check if the move results in check
         bool isCheck = isKingInCheck(isWhite);
@@ -695,18 +1016,19 @@ public:
         // Reset the move
         resetPreviousMove();
 
+
         return isCheck;
 
     }
 
-    std::vector<Move> filterMovesThatResolveCheck(const std::vector<Move>& possibleMoves, bool isWhite) {
+    std::vector<Move> filterMovesThatResolveCheck(const std::vector<Move> &possibleMoves, bool isWhite) {
         std::vector<Move> movesThatResolveCheck;
-        for (const Move& move : possibleMoves) {
+        for (const Move &move: possibleMoves) {
             // Simulate the move
-            movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured);
+            movePiece(move);
             //printBoard();
             // If the move results in the king no longer being in check, keep it
-            if (!isKingInCheck( isWhite)) {
+            if (!isKingInCheck(isWhite)) {
                 movesThatResolveCheck.push_back(move);
             }
 
@@ -717,7 +1039,7 @@ public:
         return movesThatResolveCheck;
     }
 
-    bool knightMoveValid(int startSquare, int endSquare){
+    bool knightMoveValid(int startSquare, int endSquare) {
         int startFile = startSquare % 8, targetFile = endSquare % 8;
         int startRank = startSquare / 8, targetRank = endSquare / 8;
 
@@ -733,8 +1055,8 @@ public:
 
     void simulateAndPrintAllPossibleMoves(uint64_t fromMask, PieceType pieceType) {
         std::vector<Move> possibleMoves = generateMovesForPiece(fromMask, pieceType);
-        for (const Move& move : possibleMoves) {
-            movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured);
+        for (const Move &move: possibleMoves) {
+            movePiece(move);
             //printBoard();
             resetPreviousMove();
         }
@@ -749,9 +1071,9 @@ public:
             if (resolveKingCheck(move, white)) {
                 return true;
             }
-        }else{
+        } else {
             //simulateMove
-            movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured);
+            movePiece(move);
             //check if king is in check after move
             if (isKingInCheck(white)) {
                 resetPreviousMove();
@@ -763,39 +1085,118 @@ public:
         return false;
     }
 
-    void generateBotMoves() {
-        Move bestMove;  // This will be used to store the best move found
-        int bestScore = INT_MIN;  // Initialize bestScore with the lowest possible value
-
-        // Iterate through all squares on the board
+    std::vector<Move> generateMovesForColor(bool white) {
+        std::vector<Move> allPossibleMoves;
         for (int i = 0; i < 64; i++) {
-            if (blackPieces & (1ULL << i)) {  // Check if there is a black piece on the square
-                auto moves = generateMovesForPiece(1ULL << i, getPieceTypeOnSquare(i));  // Generate possible moves for this piece
-                for (auto& move : moves) {  // Iterate through all generated moves
-                    movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured); // Apply the move to see its potential
-                    if (!isKingInCheck(false)) {  // Ensure the move does not leave your king in check
-                        int score = alphaBeta(move, INT_MIN, INT_MAX, 3, false);  // Evaluate the move using alpha-beta pruning
-                        if (score > bestScore) {  // If this move is better than previous ones, update bestScore and bestMove
-                            bestScore = score;
-                            bestMove = move;
+            uint64_t position = 1ULL << i;
+            if (white) {
+                if (whitePieces & position) {
+                    for (auto &move: generateMovesForPiece(position, getPieceTypeOnSquare((i)))) {
+                        movePiece(move);
+                        if (!isKingInCheck(true)) {
+                            allPossibleMoves.push_back(move);
                         }
+                        resetPreviousMove();
                     }
-                    resetPreviousMove();  // Revert the move to restore the board state
+                }
+            } else {
+                if (blackPieces & position) {
+                    for (auto &move: generateMovesForPiece(position, getPieceTypeOnSquare((i)))) {
+                        movePiece(move);
+                        if (!isKingInCheck(false)) {
+                            allPossibleMoves.push_back(move);
+                        }
+                        resetPreviousMove();
+                    }
+                }
+            }
+        }
+        //remove last 50% of moves
+        return allPossibleMoves;
+    }
+
+
+
+
+
+
+    std::vector<Move> generateMovesForColoren(bool white) {
+        std::vector<Move> allPossibleMoves;
+        for (int i = 0; i < 64; i++) {
+            uint64_t position = 1ULL << i;
+            if (white) {
+                if (whitePieces & position) {
+                    for (auto &move: generateMovesForPiece(position, getPieceTypeOnSquare(i) )) {
+                        movePiece(move);
+                        if (!isKingInCheck(true)) {
+                                allPossibleMoves.push_back(move);
+                        }
+                        resetPreviousMove();
+                    }
+                }
+            } else {
+                if (blackPieces & position) {
+                    for (auto &move: generateMovesForPiece(position, getPieceTypeOnSquare((i)))) {
+                        movePiece(move);
+                        if (!isKingInCheck(false)) {
+                                allPossibleMoves.push_back(move);
+
+                        }
+                        resetPreviousMove();
+                    }
                 }
             }
         }
 
-        // After evaluating all moves, apply the best move found
-        if (bestMove.pieceMoved) {  // Check if a best move has been identified
-            movePiece(*bestMove.pieceMoved, bestMove.fromSquare, bestMove.toSquare, bestMove.pieceCaptured);  // Apply the best move
-            whitesTurn = !whitesTurn;  // Switch turns
-        }
+        return allPossibleMoves;
     }
 
-// Note: This pseudocode assumes the existence of functions like movePiece, isKingInCheck,
-// generateMovesForPiece, getPieceTypeOnSquare, and a correct implementation of alphaBeta.
-// The actual implementation of these functions will depend on the details of your chess engine.
 
+    void generateBotMoves() {
+        Move bestMove;  // This will be used to store the best move found
+        int bestScore = INT_MIN;  // Initialize bestScore with the lowest possible value
+        sf::Clock clock;
+        rootMoves.clear();
+        // int pvSearch(int depth, int alpha, int beta, bool isMaximizer, bool isRoot = false) {
+/*
+        alphaBetaNoTime(INT_MIN, INT_MAX, 5, true, true);
+        std::cout << "Time taken: " << clock.getElapsedTime().asSeconds() << " seconds" << std::endl;
+        std::cout << "Root moves: " << rootMoves.size() << std::endl;
+        sort(rootMoves.begin(), rootMoves.end(), [](const Move &a, const Move &b) {
+            return a.score > b.score;
+        });
+        */
+
+        // Generate all possible moves for the current player
+        alphaBetaNoTime(INT_MIN, INT_MAX, 4, true, true);
+        sort(rootMoves.begin(), rootMoves.end(), [](const Move &a, const Move &b) {
+            return a.score > b.score;
+        });
+        bestMove = rootMoves[0];
+        cout << "Score: " << bestMove.score <<endl;
+        cout << "time taken: " << clock.getElapsedTime().asSeconds() << " seconds" << endl;
+        movePiece(bestMove);
+
+
+
+        // Clear the vector before each root-level search to start fresh.
+
+
+
+
+
+
+
+
+        whitesTurn = !whitesTurn;
+
+
+
+        // Iterate through all squares on the board
+
+        // After evaluating all moves, apply the best move found
+
+    }
 
 
     std::vector<Move> generateAllPossibleMoves() {
@@ -804,43 +1205,14 @@ public:
         for (int i = 0; i < 64; i++) {
             uint64_t position = 1ULL << i;
             if (blackPieces & position) {
-                allPossibleMoves.insert(allPossibleMoves.end(), generateMovesForPiece(position, getPieceTypeOnSquare(i)).begin(), generateMovesForPiece(position, getPieceTypeOnSquare(i)).end());
+                allPossibleMoves.insert(allPossibleMoves.end(),
+                                        generateMovesForPiece(position, getPieceTypeOnSquare(i)).begin(),
+                                        generateMovesForPiece(position, getPieceTypeOnSquare(i)).end());
             }
         }
     }
-    const std::vector<int> pawnPositionalValue = {
-            0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 ,
-            0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 ,
-            3 , 8 , 8 , 15 , 15 , 8 , 8 , 3 ,
-            3 , 7 , 7 , 12 , 12 , 7 , 7 , 3 ,
-            3 , 4 , 8 , 12 , 12 , 8 , 4 , 3 ,
-            2 , 5 , 5 , 5 , 5 , 5 , 5 , 2 ,
-            0 , 0 , 0 , 0 , 0 , 0 , 0 , 0 ,
-            0 , 0 , 0 , 0 , 0 , 0 , 0 , 0
-    };
 
-// Positional values for knights
-    const std::vector<int> knightPositionalValue = {
-            -10, -4, -2, -2, -2, -2, -4, -10,
-            -5 , 0 , 0 , 0 , 0 , 0 , 0 , -5,
-            -5 , 0 , 5 , 5 , 5 , 5 , 0 , -5,
-            -5 , 0 , 5 , 10, 10, 5 , 0 , -5,
-            -5 , 0 , 5 , 10, 10, 5 , 0 , -5,
-            -5 , 0 , 5 , 5 , 5 , 5 , 0 , -5,
-            -5 , 0 , 0 , 0 , 0 , 0 , 0 , -5,
-            -10, -4, -2, -5, -5, -2, -4, -10
-    };
 
-    const std::vector<int> bishopPositionalValue = {
-            -2, -1, -1, -1, -1, -1, -1, -2,
-            -1, 0 , 0 , 0 , 0 , 0 , 0 , -1,
-            -1, 1 , 5 , 5 , 5 , 5 , 1 , -1,
-            -1, 2 , 5 , 10, 10, 5 , 2 , -1,
-            -1, 2 , 5 , 10, 10, 5 , 2 , -1,
-            -1, 1 , 5 , 5 , 5 , 5 , 1 , -1,
-            -1, 0 , 0 , 0 , 0 , 0 , 0 , -1,
-            -2, -1, -1, -1, -1, -1, -1, -2
-    };
 
     int getPieceValue(PieceType type) {
         switch (type) {
@@ -861,139 +1233,683 @@ public:
 
 
     bool isSquareThreatened(int targetPosition, bool isPieceWhite) {
-        uint64_t enemyPieces = isPieceWhite ? blackPieces : whitePieces;
-        int targetRow = targetPosition / 8, targetCol = targetPosition % 8;
+        bool onAFile = targetPosition % 8 == 0;
+        bool onHFile = targetPosition % 8 == 7;
 
-        // Iterate through all squares to check for threats from enemy pieces
-        for (int i = 0; i < 64; i++) {
-            uint64_t position = 1ULL << i;
-            if (enemyPieces & position) {
-                PieceType pieceType = getPieceTypeOnSquare(i);
+        // Corrected enemy pawn attack positions based on piece color
+        int pawnOffset1 = isPieceWhite ? 9 : -7; // For white pieces, check black pawn attacks from +9; for black, check white pawn attacks from -7
+        int pawnOffset2 = isPieceWhite ? 7 : -9; // For white, check +7; for black, check -9
 
-                // Special handling for pawn threats due to their unique capture movement
-                if (pieceType == Pawn) {
-                    int pawnRow = i / 8, pawnCol = i % 8;
-                    int rowDiff = isPieceWhite ? pawnRow - targetRow : targetRow - pawnRow;
-                    int colDiff = abs(pawnCol - targetCol);
+        if ((!onHFile && isEnemyPawnAt(targetPosition + pawnOffset1, !isPieceWhite)) ||
+            (!onAFile && isEnemyPawnAt(targetPosition + pawnOffset2, !isPieceWhite))) {
+            return true;
+        }
 
-                    // Pawns can capture diagonally one square forward
-                    if (rowDiff == 1 && colDiff == 1) {
-                        return true;
-                    }
-                } else {
-                    // For other pieces, check if any of their possible moves can capture the target
-                    std::vector<Move> possibleMoves = generateMovesForPiece(position, pieceType);
-                    for (const Move& move : possibleMoves) {
-                        if (bitScanForward(move.toSquare) == targetPosition) {
-                            return true; // Found an enemy piece that can move to the target square
-                        }
-                    }
+        if (isKnightThreatening(targetPosition, !isPieceWhite)) {
+            return true; // Threatened by an enemy knight
+        }
+
+
+        if (isKingThreat(targetPosition, !isPieceWhite)) {
+            return true; // Threatened by an enemy king
+        }
+        if (isDiagonalThreat(targetPosition, !isPieceWhite)) {
+            return true; // Threatened by an enemy bishop or queen
+        }
+        if (isFileRankThreat(targetPosition, !isPieceWhite)) {
+            return true; // Threatened by an enemy rook or queen
+        }
+
+        if (isQueenThreatFile(targetPosition, !isPieceWhite)) {
+            return true; // Threatened by an enemy rook or queen
+        }
+
+        if (isQueenThreatDiagonal(targetPosition, !isPieceWhite)) {
+            return true; // Threatened by an enemy rook or queen
+        }
+
+        return false; // No threats found
+
+
+
+        // Additional checks for bishops, rooks, queens, and king would go here
+
+        return false; // No threats found
+    }
+
+    bool isFileRankThreat(int targetPosition, bool isEnemyWhite) {
+        const std::vector<int> fileRankOffsets = {1, -1, 8, -8};
+        for (int offset : fileRankOffsets) {
+            int currentPosition = targetPosition;
+            while (true) {
+                int nextPosition = currentPosition + offset;
+                if (nextPosition < 0 || nextPosition >= 64) break; // Out of bounds
+
+                // Calculate row and column to prevent wrapping
+                int currentRow = currentPosition / 8;
+                int nextRow = nextPosition / 8;
+                int currentCol = currentPosition % 8;
+                int nextCol = nextPosition % 8;
+
+                // Prevent horizontal movement from wrapping to the next line
+                if ((offset == 1 || offset == -1) && currentRow != nextRow) break;
+
+                // Update currentPosition for the next iteration
+                currentPosition = nextPosition;
+
+                uint64_t bitboardPosition = 1ULL << currentPosition;
+                if ((whitePieces | blackPieces) & bitboardPosition) { // Any piece blocks the way
+                    if (!isEnemyWhite && (blackRooks) & bitboardPosition) return true;
+                    if (isEnemyWhite && (whiteRooks) & bitboardPosition) return true;
+                    break; // Stop if blocked by any piece
                 }
             }
         }
-        return false; // No threats found
+        return false; // If no threat found
+    }
+    bool isQueenThreatFile(int targetPosition, bool isEnemyWhite) {
+        const std::vector<int> fileRankOffsets = {1, -1, 8, -8};
+        for (int offset : fileRankOffsets) {
+            int currentPosition = targetPosition;
+            while (true) {
+                int nextPosition = currentPosition + offset;
+                if (nextPosition < 0 || nextPosition >= 64) break; // Out of bounds
+
+                // Calculate row and column to prevent wrapping
+                int currentRow = currentPosition / 8;
+                int nextRow = nextPosition / 8;
+                int currentCol = currentPosition % 8;
+                int nextCol = nextPosition % 8;
+
+                // Prevent horizontal movement from wrapping to the next line
+                if ((offset == 1 || offset == -1) && currentRow != nextRow) break;
+
+                // Update currentPosition for the next iteration
+                currentPosition = nextPosition;
+
+                uint64_t bitboardPosition = 1ULL << currentPosition;
+                if ((whitePieces | blackPieces) & bitboardPosition) { // Any piece blocks the way
+                    if (!isEnemyWhite && (blackQueens) & bitboardPosition) return true;
+                    if (isEnemyWhite && (whiteQueens) & bitboardPosition) return true;
+                    break; // Stop if blocked by any piece
+                }
+            }
+        }
+        return false; // If no threat found
+    }
+
+    bool isKingThreat(int targetPosition, bool isEnemyWhite) {
+        const std::vector<int> kingOffsets = {1, -1, 8, -8, 7, 9, -7, -9};
+        for (int offset: kingOffsets) {
+            int currentPosition = targetPosition + offset;
+            if (isOnBoard(currentPosition, targetPosition, offset)) {
+                uint64_t bitboardPosition = 1ULL << currentPosition;
+                if ((isEnemyWhite ? whiteKing : blackKing) & bitboardPosition) {
+                    return true; // Threatened by the king
+                }
+            }
+        }
+        return false;
+    }
+    bool isKnightThreatening(int targetPosition, bool isEnemyWhite) {
+        const std::vector<int> knightMoves = {-17, -15, -10, -6, 6, 10, 15, 17}; // Knight move offsets from a position
+        for (int move : knightMoves) {
+            int newPosition = targetPosition + move;
+            if (newPosition < 0 || newPosition >= 64) continue; // Out of bounds
+            if (abs(targetPosition % 8 - newPosition % 8) > 2) continue;
+
+            int rowDifference = abs((newPosition / 8) - (targetPosition / 8));
+            int colDifference = abs((newPosition % 8) - (targetPosition % 8));
+
+            // Check if the move is valid (doesn't wrap the board)
+            if ((rowDifference == 2 && colDifference == 1) || (rowDifference == 1 && colDifference == 2)) {
+                if ((!isEnemyWhite && (blackKnights & (1ULL << newPosition))) ||
+                    (isEnemyWhite && (whiteKnights & (1ULL << newPosition)))) {
+                    return true; // A knight is threatening the target position
+                }
+            }
+        }
+        return false; // No knight threat found
+    }
+
+
+    bool isDiagonalThreat(int targetPosition, bool isEnemyWhite) {
+        const std::vector<int> diagonalOffsets = {7, 9, -7, -9};
+        int startRow = targetPosition / 8;
+        int startColumn = targetPosition % 8;
+        for (int offset : diagonalOffsets) {
+            int currentPosition = targetPosition;
+            while (true) {
+                int nextPosition = currentPosition + offset;
+                if (nextPosition < 0 || nextPosition >= 64) break; // Out of bounds
+
+                int nextRow = nextPosition / 8;
+                int nextColumn = nextPosition % 8;
+
+                // Calculate row and column differences to prevent diagonal wrapping
+                if (abs(nextRow - startRow) != abs(nextColumn - startColumn)) break;
+
+                // Update start position for next iteration's comparison
+                startRow = currentPosition / 8;
+                startColumn = currentPosition % 8;
+
+                currentPosition = nextPosition;
+
+                uint64_t bitboardPosition = 1ULL << currentPosition;
+                if ((whitePieces | blackPieces) & bitboardPosition) { // Any piece blocks the way
+                    if (!isEnemyWhite && (blackBishops) & bitboardPosition) return true;
+                    if (isEnemyWhite && (whiteBishops) & bitboardPosition) return true;
+                    break; // Stop if blocked by any piece
+                }
+            }
+        }
+        return false; // If no threat found
+    }
+    bool isQueenThreatDiagonal(int targetPosition, bool isEnemyWhite) {
+        const std::vector<int> diagonalOffsets = {7, 9, -7, -9};
+        int startRow = targetPosition / 8;
+        int startColumn = targetPosition % 8;
+        for (int offset : diagonalOffsets) {
+            int currentPosition = targetPosition;
+            while (true) {
+                int nextPosition = currentPosition + offset;
+                if (nextPosition < 0 || nextPosition >= 64) break; // Out of bounds
+
+                int nextRow = nextPosition / 8;
+                int nextColumn = nextPosition % 8;
+
+                // Calculate row and column differences to prevent diagonal wrapping
+                if (abs(nextRow - startRow) != abs(nextColumn - startColumn)) break;
+
+                // Update start position for next iteration's comparison
+                startRow = currentPosition / 8;
+                startColumn = currentPosition % 8;
+
+                currentPosition = nextPosition;
+
+                uint64_t bitboardPosition = 1ULL << currentPosition;
+                if ((whitePieces | blackPieces) & bitboardPosition) { // Any piece blocks the way
+                    if (!isEnemyWhite && (blackQueens) & bitboardPosition) return true;
+                    if (isEnemyWhite && (whiteQueens) & bitboardPosition) return true;
+                    break; // Stop if blocked by any piece
+                }
+            }
+        }
+        return false; // If no threat found
     }
 
 
 
+    bool isOnBoard(int currentPosition, int originalPosition, int offset) {
+        // Check if off the board vertically
+        if (currentPosition < 0 || currentPosition >= 64) return false;
+
+        // Calculate row and column to prevent wrapping
+        int currentRow = currentPosition / 8, currentCol = currentPosition % 8;
+        int originalRow = originalPosition / 8, originalCol = originalPosition % 8;
+
+        // Prevent horizontal wrapping
+        if (offset == 1 || offset == -1) {
+            return currentRow == originalRow;
+        }
+        // Prevent vertical wrapping (technically unnecessary but included for completeness)
+        if (offset == 8 || offset == -8) {
+            return true; // Always true since vertical moves can't wrap
+        }
+        // Prevent diagonal wrapping
+        return abs(currentRow - originalRow) == abs(currentCol - originalCol);
+    }
 
 
-    int evaluateBoard(bool isWhite, Move move) {
+    bool isEnemyPawnAt(int position, bool isEnemyWhite) {
+        if (position < 0 || position >= 64) return false; // Out of bounds
+        uint64_t bitboardPosition = 1ULL << position;
+        return (isEnemyWhite ? whitePawns : blackPawns) & bitboardPosition;
+    }
+
+    bool isEnemyKnightAt(int position, bool isEnemyWhite) {
+        if (position < 0 || position >= 64) return false; // Out of bounds
+        uint64_t bitboardPosition = 1ULL << position;
+        return (isEnemyWhite ? whiteKnights : blackKnights) & bitboardPosition;
+    }
+    bool hasPawnSupport(int targetPosition, bool isPieceWhite) {
+        int pawnOffsets[2] = {isPieceWhite ? -7 : 7, isPieceWhite ? -9 : 9}; // Determine offsets based on color
+        bool onAFile = targetPosition % 8 == 0;
+        bool onHFile = targetPosition % 8 == 7;
+
+        for (int offset : pawnOffsets) {
+            int supportPosition = targetPosition + offset;
+            // Edge of board adjustments
+            if ((onAFile && offset == (isPieceWhite ? -9 : 7)) || (onHFile && offset == (isPieceWhite ? -7 : 9))) continue;
+            if (supportPosition < 0 || supportPosition >= 64) continue; // Out of bounds safety check
+
+            uint64_t bitboardPosition = 1ULL << supportPosition;
+            // Check if a pawn of the same color occupies the support position
+            if ((isPieceWhite && (whitePawns & bitboardPosition)) || (!isPieceWhite && (blackPawns & bitboardPosition))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+
+
+    int getPositionalValue(PieceType pieceType, int position, bool isWhite) {
+        int index = isWhite ? position : (63 - position); // Flip position for black
+        switch (pieceType) {
+            case Pawn:
+                return pawnPositionalValue[index];
+            case Knight:
+                return knightPositionalValue[index];
+            case Bishop:
+                return bishopPositionalValue[index];
+            case Rook:
+                return rookPositionalValue[index];
+            case Queen:
+                return queenPositionalValue[index];
+            default:
+                return 0;
+        }
+    }
+
+
+    int evaluateBoard(bool isWhite) {
         int score = 0;
-        // Assume basic piece values and other constants are defined elsewhere
         for (int i = 0; i < 64; i++) {
             uint64_t position = 1ULL << i;
-            bool isPieceWhite = (whitePieces & position) != 0;
-            int pieceValue = 0; // Initialize to 0 for each square
+            PieceType pieceType = getPieceTypeOnSquare(i);
+            bool isWhitePiece = isSquareOccupiedByWhite(i);
+            if (isWhitePiece == isWhite && pieceType != None) {
+                int pieceValue = getPieceValue(pieceType);
+                score += pieceValue + getPositionalValue(pieceType, i, isWhite);
 
-            if (whitePawns & position || blackPawns & position) {
-                pieceValue = pawnValue + pawnPositionalValue[i];
-            } else if (whiteKnights & position || blackKnights & position) {
-                pieceValue = knightValue + knightPositionalValue[i];
-            } else if (whiteBishops & position || blackBishops & position) {
-                pieceValue = bishopValue + bishopPositionalValue[i];
-            }else if (whiteRooks & )
-            // Continue for other piece types
-
-            // Adjust the score based on the piece's color relative to the side being evaluated
-            score += (isPieceWhite == isWhite ? pieceValue : -pieceValue);
+                if (isSquareThreatened(i, isWhite)) {
+                    bool reverseThreatBackup = isSquareThreatened(i, isWhite);
+                    bool pawnSupport = hasPawnSupport(i, isWhitePiece);
+                    bool backup = reverseThreatBackup || pawnSupport;
+                    int threatValue = getPieceValue(findMostSignificantThreateningPieceType(i, !isWhite));
+                    // Adjust score based on threat and backup status; consider refining this logic
+                    int difference = pieceValue - threatValue;
+                    if (!backup) {
+                        if (difference > 13){
+                            score -= pieceValue * 4;
+                        } else{
+                            score -= pieceValue * 2;
+                        }
+                    } else {
+                        if (difference > 12){
+                            score -= pieceValue * 2;
+                        }
+                    }
+                }
+            } else if (pieceType != None) {
+                score -= getPieceValue(pieceType);
+            }
         }
-        bool isthreatened = isSquareThreatened(bitScanForward(move.toSquare), isWhite);
-        if (isthreatened){
-            int minusscore = getPieceValue(getPieceTypeOnSquare(bitScanForward(move.fromSquare)));
-            score -= (minusscore * 10);
+        return score;
+    }
+
+
+    int evaluateBoardForWhitePieces() {
+        int score = 0;
+        for (int i = 0; i < 64; i++) {
+            uint64_t position = 1ULL << i;
+            PieceType pieceType = getPieceTypeOnSquare(i);
+            bool isWhitePiece = isSquareOccupiedByWhite(i);
+
+            // Focus on white pieces
+            if (isWhitePiece && pieceType != None) {
+                int pieceValue = getPieceValue(pieceType);
+                int positionalValue = getPositionalValue(pieceType, i, isWhitePiece);
+                score += pieceValue + positionalValue;
+
+                // If the piece is threatened, adjust the score
+                if (isSquareThreatened(i, isWhitePiece)) {
+                    bool reverseThreatBackup = isSquareThreatened(i, !isWhitePiece);
+                    bool pawnSupport = hasPawnSupport(i, isWhitePiece);
+                    bool backup = reverseThreatBackup || pawnSupport;
+                    if (!backup) {
+                        score -= 15;
+                    }else{
+                        score -= 5;
+                    }
+                }
+            }
+            score -= getPieceValue(pieceType);
         }
-        // After scoring all pieces, check if the moved piece is threatened and adjust the score
+        return score;
+    }
 
-
+    int shortEvalBoard(bool white){
+        int score = 0;
+        int enemies = 0;
+        int friendlys = 0;
+        int TotalFriendlyPieceValue = 0;
+        int TotalEnemyPieceValue = 0;
+        for (int i = 0; i < 64; i++){
+            uint64_t position = 1ULL << i;
+            PieceType pieceType = getPieceTypeOnSquare(i);
+            bool isWhitePiece = isSquareOccupiedByWhite(i);
+            if (isWhitePiece == white && pieceType != None){
+                score += getPositionalValue(pieceType, i, isWhitePiece);
+                score += getPieceValue(pieceType) * 5;
+                friendlys++;
+            }else{
+                score -= getPieceValue(pieceType) * 2;
+                enemies++;
+            }
+        }
+        score += (friendlys - enemies);
         return score;
     }
 
 
 
 
-
-
-
-
-    int alphaBeta(Move moved, int alpha, int beta, int depth, bool isMaximizer){
-        if (depth == 0){
-            return evaluateBoard(false, moved);
+    void printPieceType(PieceType pieceType) {
+        switch (pieceType) {
+            case Pawn:   std::cout << "Pawn";   break;
+            case Knight: std::cout << "Knight"; break;
+            case Bishop: std::cout << "Bishop"; break;
+            case Rook:   std::cout << "Rook";   break;
+            case Queen:  std::cout << "Queen";  break;
+            case King:   std::cout << "King";   break;
+            default:     std::cout << "None";   break;
         }
-        if (isMaximizer){
+
+
+    }
+
+
+
+    PieceType findMostSignificantThreateningPieceType(int targetPosition, bool isEnemyWhite) {
+        PieceType mostSignificantThreat = None; // Initialize as None, assuming no threat initially
+        bool threatDetected = false;
+
+        // Calculate enemy pawn attack positions with edge case handling
+        int pawnOffset1 = !isEnemyWhite ? -7 : 9;
+        int pawnOffset2 = !isEnemyWhite ? -9 : 7;
+        bool onAFile = targetPosition % 8 == 0;
+        bool onHFile = targetPosition % 8 == 7;
+
+        if ((!onHFile && isEnemyPawnAt(targetPosition + pawnOffset1, !isEnemyWhite)) ||
+            (!onAFile && isEnemyPawnAt(targetPosition + pawnOffset2, !isEnemyWhite))) {
+            mostSignificantThreat = Pawn;
+            threatDetected = true;
+        }
+
+        if (!threatDetected && isKnightThreatening(targetPosition, !isEnemyWhite)) {
+            mostSignificantThreat = Knight;
+            threatDetected = true;
+        }
+
+        if (!threatDetected && isDiagonalThreat(targetPosition, !isEnemyWhite)) {
+            mostSignificantThreat = Bishop;
+            threatDetected = true;
+        }
+
+        if (!threatDetected && isFileRankThreat(targetPosition, !isEnemyWhite)) {
+            mostSignificantThreat = Rook;
+            threatDetected = true;
+        }
+
+        if (!threatDetected && isQueenThreatFile(targetPosition, !isEnemyWhite)) {
+            mostSignificantThreat = Queen;
+            threatDetected = true;
+        }
+
+        if (!threatDetected && isQueenThreatDiagonal(targetPosition, !isEnemyWhite)) {
+            mostSignificantThreat = Queen;
+            threatDetected = true;
+        }
+
+        // Assuming isQueenThreatDiagonal and isQueenThreatFile are consolidated into isDiagonalThreat and isFileRankThreat
+        // if you have separate functions for queen, you can integrate them here as needed but ensure they don't overlap with bishop and rook logic
+
+        if (!threatDetected && isKingThreat(targetPosition, !isEnemyWhite)) {
+            mostSignificantThreat = King;
+            threatDetected = true;
+        }
+
+        return mostSignificantThreat; // Will return None if no threats are found, or the lowest value piece type that is threatening the target position
+    }
+
+    int pvSearch(int alpha, int beta, int depth, bool isMaximizer) {
+        if (depth == 0){
+            return isMaximizer? -shortEvalBoard(false) : shortEvalBoard(false);
+        }
+        bool bSearchPV = true;
+        int score = INT_MIN;
+        auto moves = generateMovesForColor(isMaximizer);
+        for (auto &move: moves){
+            movePiece(move);
+            if (bSearchPV){
+                score = -pvSearch(-beta, -alpha, depth - 1, !isMaximizer);
+            }else{
+                score = -pvSearch(-alpha - 1, -alpha, depth - 1, !isMaximizer);
+                if (alpha < score && score < beta){
+                    score = -pvSearch(-beta, -alpha, depth - 1, !isMaximizer);
+                }
+            }
+            resetPreviousMove();
+            if (score >= beta){
+                return beta;
+            }
+            if (score > alpha){
+                alpha = score;
+                bSearchPV = false;
+            }
+        }
+    }
+
+
+
+
+
+
+    /*
+     function pvs(node, depth, α, β, color) is
+    if depth = 0 or node is a terminal node then
+        return color × the heuristic value of node
+    for each child of node do
+        if child is first child then
+            score := −pvs(child, depth − 1, −β, −α, −color)
+        else
+            score := −pvs(child, depth − 1, −α − 1, −α, −color) (* search with a null window *)
+            if α < score < β then
+                score := −pvs(child, depth − 1, −β, −α, −color) (* if it failed high, do a full re-search *)
+        α := max(α, score)
+        if α ≥ β then
+            break (* beta cut-off *)
+    return α
+     */
+
+    vector<Move> orderingmoves(vector<Move> moves) {
+        vector<Move> orderedMoves;
+        for ( auto &move: moves) {
+            movePiece(move);
+            move.score = shortEvalBoard(false);
+            resetPreviousMove();
+        }
+        sort(moves.begin(), moves.end(), [](const Move &a, const Move &b) {
+            return a.score > b.score;
+        });
+        return orderedMoves;
+    }
+
+    int alphaBetaNoTime(int alpha, int beta, int depth, bool isMaximizer, bool root) {
+        if (depth == 0) {
+            return quiesceloader();
+        }
+        if (isMaximizer) {
             int maxEval = INT_MIN;
-            for (int i = 0; i < 64; i++) {
-                uint64_t position = 1ULL << i;
-                if (blackPieces & position) {
-                    auto moves = generateMovesForPiece(position, getPieceTypeOnSquare(i));
-                    for (auto& move : moves) {
-                        movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured);
-                        int eval = alphaBeta(move, alpha, beta, depth - 1, false);
-                        maxEval = std::max(maxEval, eval);
-                        alpha = std::max(alpha, eval);
-                        resetPreviousMove();
-                        if (alpha >= beta){
-                            break;
-                        }
-                    }
+            auto moves = generateMovesForColor(false); // Generate moves for black
+            for (auto& move : moves) {
+                movePiece(move); // Apply the move
+                int eval = alphaBetaNoTime(alpha, beta, depth - 1, false, false); // Recurse for minimizing player
+                if (root) { // If this is the root, save the move and its score
+                    move.score = eval; // Set the move's score
+                    rootMoves.push_back(move); // Add the move to rootMoves
+                }
+                maxEval = std::max(maxEval, eval);
+                alpha = std::max(alpha, eval);
+                resetPreviousMove(); // Undo the move
+                if (alpha >= beta) break; // Alpha-beta pruning
+            }
+            return maxEval;
+        } else {
+            int minEval = INT_MAX;
+            auto moves = generateMovesForColor(true); // Generate moves for white
+            for (const auto& move : moves) {
+                movePiece(move);
+                int eval = alphaBetaNoTime(alpha, beta, depth - 1, true, false); // Recurse for maximizing player
+                minEval = std::min(minEval, eval);
+                beta = std::min(beta, eval);
+                resetPreviousMove();
+                if (beta <= alpha) break;
+            }
+            return minEval;
+        }
+    }
+
+
+
+
+
+
+
+
+    int alphaBeta(int alpha, int beta, int depth, bool isMaximizer, sf::Clock clock, int time) {
+        // Base case: if depth is 0, evaluate the board from black's perspective.
+        if (clock.getElapsedTime().asSeconds() > time){
+            return shortEvalBoard(false);
+        }
+        if (depth == 0) {
+            return shortEvalBoard(false);
+        }
+
+        if (isMaximizer) {
+            int maxEval = INT_MIN;
+            // Generate moves for black since the bot is black
+            auto moves = generateMovesForColor(false); // Assuming false generates moves for black
+            for (const auto& move : moves) {
+                movePiece(move); // Apply the move to the board.
+                int eval = alphaBeta(alpha, beta, depth - 1, false, clock, time); // Recursive call for the minimizing player.
+                maxEval = std::max(maxEval, eval);
+                alpha = std::max(alpha, eval); // Update alpha if necessary.
+                resetPreviousMove(); // Undo the move to restore board state.
+                if (alpha >= beta) {
+                    break; // Alpha cut-off for pruning.
                 }
             }
             return maxEval;
-        }else{
+        } else {
             int minEval = INT_MAX;
-            for (int i = 0; i < 64; i++) {
-                uint64_t position = 1ULL << i;
-                if (whitePieces & position) {
-                    auto moves = generateMovesForPiece(position, getPieceTypeOnSquare(i));
-                    for (auto& move : moves) {
-                        movePiece(*move.pieceMoved, move.fromSquare, move.toSquare, move.pieceCaptured);
-                        int eval = alphaBeta(move, alpha, beta, depth - 1, true);
-                        minEval = std::min(minEval, eval);
-                        beta = std::min(beta, eval);
-                        resetPreviousMove();
-                        if (beta <=  alpha){
-                            break;
-                        }
-                    }
+            // Generate moves for white since this is the opponent's turn
+            auto moves = generateMovesForColor(true); // Assuming true generates moves for white
+            for (const auto& move : moves) {
+                movePiece(move); // Apply the move to the board.
+                int eval = alphaBeta(alpha, beta, depth - 1, true, clock, time); // Recursive call for the maximizing player.
+                minEval = std::min(minEval, eval);
+                beta = std::min(beta, eval); // Update beta if necessary.
+                resetPreviousMove(); // Undo the move to restore board state.
+                if (beta <= alpha) {
+                    break; // Beta cut-off for pruning.
                 }
             }
             return minEval;
-
         }
+    }
+
+    int quiesceloader(){
+        vector<Move> moves = generateMovesForColor(false);
+        for (auto &move: moves){
+            if(move.capture){
+                quiesceMoves.push_back(move);
+            }
+        }
+        int score = quiesce(INT_MIN, INT_MAX);
+        quiesceMoves.clear();
+        return score;
+    }
+
+    int quiesce(int alpha, int beta){
+        int stand_pat = shortEvalBoard(false);
+        if (stand_pat >= beta){
+            return beta;
+        }
+        if (alpha < stand_pat){
+            alpha = stand_pat;
+        }
+        for (auto &move: quiesceMoves){
+            movePiece(move);
+            int score = -quiesce(-beta, -alpha);
+            resetPreviousMove();
+            if (score >= beta){
+                return beta;
+            }
+            if (score > alpha){
+                alpha = score;
+            }
+        }
+        return alpha;
 
     }
+/*
+    int alphaBetaan(int alpha, int beta, int depth, bool isMaximizer, sf::Clock clock) {
+        // Base case: if depth is 0, evaluate the board from black's perspective.
+        if (depth == 0) {
+            return evaluateBoard(false) ;
+        }
+
+        if (isMaximizer) {
+            int maxEval = INT_MIN;
+            // Generate moves for black since the bot is black
+            auto moves = generateMovesForColoren(false); // Assuming false generates moves for black
+            for (const auto& move : moves) {
+                movePiece(move); // Apply the move to the board.
+                int eval = alphaBeta(alpha, beta, depth - 1, false, clock); // Recursive call for the minimizing player.
+                maxEval = std::max(maxEval, eval);
+                alpha = std::max(alpha, eval); // Update alpha if necessary.
+                resetPreviousMove(); // Undo the move to restore board state.
+                if (alpha >= beta) {
+                    break; // Alpha cut-off for pruning.
+                }
+            }
+            return maxEval;
+        } else {
+            int minEval = INT_MAX;
+            // Generate moves for white since this is the opponent's turn
+            auto moves = generateMovesForColoren(true); // Assuming true generates moves for white
+            for (const auto& move : moves) {
+                movePiece(move); // Apply the move to the board.
+                int eval = alphaBeta(alpha, beta, depth - 1, true, clock); // Recursive call for the maximizing player.
+                minEval = std::min(minEval, eval);
+                beta = std::min(beta, eval); // Update beta if necessary.
+                resetPreviousMove(); // Undo the move to restore board state.
+                if (beta <= alpha) {
+                    break; // Beta cut-off for pruning.
+                }
+            }
+            return minEval;
+        }
+    }
+    */
+
+
+
 
     static int calculateCapturedPieceScore(PieceType pieceType) {
         switch (pieceType) {
             case Pawn:
-                return 1;
+                return pawnValue;
             case Knight:
             case Bishop:
-                return 3;
+                return bishopValue;
             case Rook:
-                return 5;
+                return rookValue;
             case Queen:
-                return 9;
+                return queenValue;
             default:
                 return 0;
         }
